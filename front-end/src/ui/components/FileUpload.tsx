@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Upload, FileText, Image as ImageIcon, X, FileUp } from "lucide-react";
+import { Upload, FileText, Image as ImageIcon, X, FileUp, FileSpreadsheet } from "lucide-react";
 import type { UploadedFile } from "@/features/upload";
 
 interface FileUploadProps {
@@ -31,6 +31,9 @@ const ACCEPTED_TYPES = [
   "image/jpg",
   "image/webp",
   "image/bmp",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+  "application/vnd.ms-excel", // .xls
+  "text/csv", // .csv
 ];
 
 export function FileUpload({
@@ -128,6 +131,14 @@ export function FileUpload({
     ) {
       return <FileText className="size-5 text-blue-500" />;
     }
+    if (
+      type ===
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+      type === "application/vnd.ms-excel" ||
+      type === "text/csv"
+    ) {
+      return <FileSpreadsheet className="size-5 text-green-600" />;
+    }
     return <ImageIcon className="size-5 text-green-500" />;
   };
 
@@ -176,7 +187,7 @@ export function FileUpload({
           <input
             type="file"
             multiple
-            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.bmp"
+            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.bmp,.xlsx,.xls,.csv"
             onChange={handleFileInput}
             className="absolute inset-0 cursor-pointer opacity-0"
           />
@@ -237,7 +248,12 @@ export function FileUpload({
                         : file.type.includes("wordprocessingml") ||
                             file.type.includes("msword")
                           ? "Word"
-                          : "Ảnh"}
+                          : file.type.includes("spreadsheetml") || 
+                            file.type.includes("ms-excel")
+                            ? "Excel"
+                            : file.type === "text/csv"
+                              ? "CSV"
+                              : "Ảnh"}
                     </Badge>
                   </div>
                 </div>

@@ -25,6 +25,7 @@ import {
   CheckCircle2,
   History,
   Check,
+  FileSpreadsheet,
 } from "lucide-react";
 import type { UploadedFile, InputMode, YouTubeInput } from "@/features/upload";
 import { useUploadRecords, getUploadContentApi } from "@/features/upload";
@@ -44,6 +45,9 @@ const ACCEPTED_TYPES = [
   "image/jpg",
   "image/webp",
   "image/bmp",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+  "application/vnd.ms-excel", // .xls
+  "text/csv", // .csv
 ];
 
 const CAPTION_LANG_OPTIONS = [
@@ -97,14 +101,24 @@ function isValidYouTubeUrl(url: string): boolean {
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function FileIcon({ type }: { type: string }) {
-  if (type === "application/pdf")
+  if (type === "application/pdf") {
     return <FileText className="size-5 text-red-500" />;
+  }
   if (
     type ===
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     type === "application/msword"
-  )
+  ) {
     return <FileText className="size-5 text-blue-500" />;
+  }
+  if (
+    type ===
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    type === "application/vnd.ms-excel" ||
+    type === "text/csv"
+  ) {
+    return <FileSpreadsheet className="size-5 text-green-600" />;
+  }
   return <ImageIcon className="size-5 text-green-500" />;
 }
 
@@ -128,6 +142,8 @@ function ReusableFileItem({
     icon = <FileText className="size-4 text-blue-500" />;
   else if (["png", "jpg", "jpeg", "webp", "bmp", "tiff"].includes(ext))
     icon = <ImageIcon className="size-4 text-green-500" />;
+  else if (["xlsx", "xls", "csv"].includes(ext))
+    icon = <FileSpreadsheet className="size-4 text-green-600" />;
 
   const sizeStr =
     record.fileSize < 1024
@@ -286,7 +302,7 @@ function FileUploadTab({
           <input
             type="file"
             multiple
-            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.bmp"
+            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.bmp,.xlsx,.xls,.csv"
             onChange={(e) => {
               if (e.target.files) processFiles(e.target.files);
               e.target.value = "";
@@ -742,6 +758,13 @@ export function InputSourceTabs({
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
       f.type === "application/msword",
   ).length;
+  const excelCount = files.filter(
+    (f) =>
+      f.type ===
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+      f.type === "application/vnd.ms-excel" ||
+      f.type === "text/csv",
+  ).length;
   const imgCount = files.filter((f) => f.type.startsWith("image/")).length;
 
   return (
@@ -796,6 +819,12 @@ export function InputSourceTabs({
               <Badge variant="outline" className="gap-1">
                 <FileText className="size-3 text-blue-500" />
                 {docCount} DOCX
+              </Badge>
+            )}
+            {excelCount > 0 && (
+              <Badge variant="outline" className="gap-1">
+                <FileSpreadsheet className="size-3 text-green-600" />
+                {excelCount} Excel
               </Badge>
             )}
             {imgCount > 0 && (

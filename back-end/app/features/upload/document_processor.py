@@ -131,6 +131,9 @@ def _extract_file(record: UploadedFileRecord) -> str:
     elif ext in ("png", "jpg", "jpeg", "webp", "bmp", "tiff"):
         from app.features.quizz.ocr_service import extract_text_from_image
         return extract_text_from_image(record.stored_path)
+    elif ext in ("xlsx", "xls", "csv"):
+        from app.features.quizz.spreadsheet_service import extract_text_from_spreadsheet
+        return extract_text_from_spreadsheet(record.stored_path, ext)
     else:
         raise ValueError(f"Unsupported file type: {ext}")
 

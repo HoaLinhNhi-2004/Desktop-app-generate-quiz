@@ -54,6 +54,9 @@ const ACCEPTED_TYPES = [
   "image/jpg",
   "image/webp",
   "image/bmp",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+  "application/vnd.ms-excel", // .xls
+  "text/csv", // .csv
 ];
 
 const YT_URL_RE =
@@ -362,7 +365,7 @@ function UploadForm({ folderId }: { folderId: string }) {
                 <input
                   type="file"
                   multiple
-                  accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.bmp"
+                  accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.bmp,.xlsx,.xls,.csv"
                   onChange={(e) => {
                     if (e.target.files) processFiles(e.target.files);
                     e.target.value = "";

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 upload_bp = Blueprint("upload", __name__)
 
-ALLOWED_EXTENSIONS = {"pdf", "doc", "docx", "png", "jpg", "jpeg", "webp", "bmp"}
+ALLOWED_EXTENSIONS = {"pdf", "doc", "docx", "png", "jpg", "jpeg", "webp", "bmp", "xlsx", "xls", "csv"}
 
 
 def _upload_allowed(filename: str) -> bool:

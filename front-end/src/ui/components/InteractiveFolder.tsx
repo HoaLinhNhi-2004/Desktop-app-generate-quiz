@@ -3,6 +3,17 @@ import { motion, type Transition } from "framer-motion";
 import { Trash2, Star, Folder, Pencil, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import i18n from "@/config/i18n";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -409,7 +420,7 @@ export function InteractiveFolder({
         {/* ── FRONT PIECE ── */}
         <div
           className={cn(
-            "absolute z-[10] rounded-2xl overflow-hidden transition-all duration-500",
+            "absolute z-[10] rounded-[10px] overflow-hidden transition-all duration-500",
             isProcessing && "shadow-[0_4px_25px_rgba(59,130,246,0.25)]"
           )}
           style={{
@@ -422,7 +433,6 @@ export function InteractiveFolder({
               ${withAlpha(color, 0.55)} 40%, 
               ${withAlpha(color, 0.48)} 100%)`,
             backdropFilter: "blur(12px) saturate(180%)",
-            border: "1px solid rgba(255,255,255,0.18)",
             boxShadow: `
               0 8px 32px rgba(0,0,0,0.18),
               inset 0 2px 6px rgba(255,255,255,0.12),
@@ -512,15 +522,33 @@ export function InteractiveFolder({
                 <Pencil className="size-3" />
               </button>
             )}
-            <button
-              className="size-6 flex items-center justify-center rounded-md bg-black/20 backdrop-blur-sm text-white/50 hover:text-white hover:bg-red-500/50 transition-colors"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-            >
-              <Trash2 className="size-3" />
-            </button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <button
+                  className="size-6 flex items-center justify-center rounded-md bg-black/20 backdrop-blur-sm text-white/50 hover:text-white hover:bg-red-500/50 transition-colors"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Trash2 className="size-3" />
+                </button>
+              </AlertDialogTrigger>
+              <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Xóa thư mục "{name}"?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Thao tác này sẽ xóa vĩnh viễn thư mục và toàn bộ tài liệu bên trong. Bạn không thể hoàn tác.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Hủy</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    onClick={onDelete}
+                  >
+                    Xóa
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </motion.div>
         </div>
       </div>
@@ -635,15 +663,33 @@ export function FolderListItem({
             <Pencil className="size-3.5" />
           </button>
         )}
-        <button
-          className="size-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-        >
-          <Trash2 className="size-3.5" />
-        </button>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <button
+              className="size-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </AlertDialogTrigger>
+          <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Xóa thư mục "{name}"?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Thao tác này sẽ xóa vĩnh viễn thư mục và toàn bộ tài liệu bên trong. Bạn không thể hoàn tác.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Hủy</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={onDelete}
+              >
+                Xóa
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </motion.div>
   );

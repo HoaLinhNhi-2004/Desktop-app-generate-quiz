@@ -47,6 +47,7 @@ import {
 import { PdfQuizViewer } from "../components/PdfQuizViewer";
 import { TextSourceViewer } from "../components/TextSourceViewer";
 import { YouTubeSourceViewer } from "../components/YouTubeSourceViewer";
+import { SpreadsheetSourceViewer } from "../components/SpreadsheetSourceViewer";
 import {
   useUploadsByQuizSet,
   useUploadsByIds,
@@ -508,6 +509,8 @@ function QuizPdfViewerDialog({
 
   // Detect input mode from upload records
   const inputMode = viewerUploads?.[0]?.inputMode;
+  const isSpreadsheet = viewerUploads?.[0]?.fileType?.toLowerCase() && ["xlsx", "xls", "csv"].includes(viewerUploads?.[0].fileType.toLowerCase());
+  const viewerSpreadsheetRecord = isSpreadsheet ? viewerUploads?.[0] : undefined;
 
   return (
     <>
@@ -527,7 +530,17 @@ function QuizPdfViewerDialog({
           quizSetId={quizSetId ?? undefined}
         />
       )}
-      {!viewerLoading && !viewerPdfRecord && inputMode === "text" && (
+      {!viewerLoading && viewerSpreadsheetRecord && (
+        <SpreadsheetSourceViewer
+          open
+          onClose={onClose}
+          excelUrl={getUploadFileUrl(viewerSpreadsheetRecord.id)}
+          fileName={viewerSpreadsheetRecord.originalName}
+          questions={viewerQuestions}
+          quizTitle={quizTitle}
+        />
+      )}
+      {!viewerLoading && !viewerPdfRecord && !viewerSpreadsheetRecord && inputMode !== "youtube" && (
         <TextSourceViewer
           open
           onClose={onClose}
@@ -545,26 +558,6 @@ function QuizPdfViewerDialog({
           quizSetId={quizSetId}
         />
       )}
-      {!viewerLoading &&
-        !viewerPdfRecord &&
-        inputMode !== "text" &&
-        inputMode !== "youtube" && (
-          <Dialog open onOpenChange={(v) => !v && onClose()}>
-            <DialogContent className="max-w-sm">
-              <DialogHeader>
-                <DialogTitle>
-                  {i18n.t("folder.noMaterialSelectedPdf")}
-                </DialogTitle>
-              </DialogHeader>
-              <p className="text-sm text-muted-foreground">
-                {i18n.t("folder.noMaterialSelectedPdfDesc")}
-              </p>
-              <Button variant="outline" onClick={onClose}>
-                {i18n.t("common.close")}
-              </Button>
-            </DialogContent>
-          </Dialog>
-        )}
     </>
   );
 }

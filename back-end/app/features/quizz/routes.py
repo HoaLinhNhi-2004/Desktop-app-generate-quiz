@@ -61,6 +61,9 @@ def _extract_text_from_file(filepath: str, lang: str = "vi") -> str:
     elif ext in ["docx", "doc"]:
         from app.features.quizz.docx_service import extract_text_from_docx
         return extract_text_from_docx(filepath)
+    elif ext in ["xlsx", "xls", "csv"]:
+        from app.features.quizz.spreadsheet_service import extract_text_from_spreadsheet
+        return extract_text_from_spreadsheet(filepath, ext)
     else:
         # Image file
         from app.features.quizz.ocr_service import extract_text_from_image
@@ -260,9 +263,14 @@ def get_quiz_set_source_text(quiz_set_id):
             except Exception as e:
                 logger.warning("source-text PDF failed %s: %s", path, e)
 
-        elif ext in ("docx", "doc"):
+        elif ext in ("docx", "doc", "xlsx", "xls", "csv"):
             try:
-                text = extract_text_from_docx(path)
+                if ext in ("docx", "doc"):
+                    text = extract_text_from_docx(path)
+                else:
+                    from app.features.quizz.spreadsheet_service import extract_text_from_spreadsheet
+                    text = extract_text_from_spreadsheet(path, ext)
+
                 if text.strip():
                     SECTION_SIZE = 2000
                     paragraphs = re.split(r"\n{2,}", text.strip())
