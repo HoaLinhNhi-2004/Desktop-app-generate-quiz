@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, type Transition } from "framer-motion";
-import { Trash2, Star, Folder, Pencil } from "lucide-react";
+import { Trash2, Star, Folder, Pencil, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import i18n from "@/config/i18n";
@@ -15,6 +15,7 @@ interface InteractiveFolderProps {
   quizCount: number;
   createdAt: string;
   isFavorite?: boolean;
+  processingCount?: number;
   onClick: () => void;
   onDelete: () => void;
   onToggleFavorite?: () => void;
@@ -326,12 +327,14 @@ export function InteractiveFolder({
   color,
   quizCount,
   isFavorite = false,
+  processingCount = 0,
   onClick,
   onDelete,
   onToggleFavorite,
   onEdit,
 }: InteractiveFolderProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const isProcessing = processingCount > 0;
 
   return (
     <motion.div
@@ -405,7 +408,10 @@ export function InteractiveFolder({
 
         {/* ── FRONT PIECE ── */}
         <div
-          className="absolute z-[10] rounded-2xl overflow-hidden"
+          className={cn(
+            "absolute z-[10] rounded-2xl overflow-hidden transition-all duration-500",
+            isProcessing && "shadow-[0_4px_25px_rgba(59,130,246,0.25)]"
+          )}
           style={{
             top: "38%",
             left: 0,
@@ -424,24 +430,49 @@ export function InteractiveFolder({
             `,
           }}
         >
+          {/* Subtle shimmer effect when processing */}
+          {isProcessing && (
+            <motion.div
+              className="absolute inset-0 z-0 pointer-events-none"
+              style={{
+                background: 'linear-gradient(115deg, transparent 20%, rgba(255,255,255,0.25) 45%, rgba(255,255,255,0.35) 50%, rgba(255,255,255,0.25) 55%, transparent 80%)',
+                backgroundSize: '200% 100%'
+              }}
+              animate={{ backgroundPosition: ['200% 0', '-100% 0'] }}
+              transition={{ duration: 2.5, repeat: Infinity, ease: 'linear' }}
+            />
+          )}
+
           <div
             className="absolute inset-x-0 top-0 pointer-events-none"
             style={{
               height: "35%",
-              background:
-                "linear-gradient(180deg, rgba(255,255,255,0.1), transparent)",
+              background: "linear-gradient(180deg, rgba(255,255,255,0.1), transparent)",
               borderRadius: "inherit",
             }}
           />
 
           {/* ── Details ── */}
-          <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-1 px-2 pb-3">
+          <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-1 px-2 pb-3 z-10">
             <p className="text-xs font-semibold text-white truncate w-full text-center drop-shadow-sm">
               {name}
             </p>
-            <p className="text-[10px] text-white/60 text-center">
-              {quizCount === 0 ? "Empty" : `${quizCount} Documents`}
-            </p>
+            <div className="h-3.5 flex items-center justify-center text-center w-full">
+              {isProcessing ? (
+                <motion.span 
+                  className="text-[10px] text-white/90 font-medium tracking-wide flex items-center gap-1"
+                  animate={{ opacity: [0.5, 1, 0.5] }}
+                  transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+                >
+                  <Loader2 className="size-2.5 animate-spin" />
+                  Processing {processingCount}...
+                </motion.span>
+              ) : (
+                <span className="text-[10px] text-white/60">
+                  {quizCount === 0 ? "Empty" : `${quizCount} Documents`}
+                </span>
+              )}
+            </div>
           </div>
 
           {/* ── Favorite ── */}
@@ -506,30 +537,43 @@ export function FolderListItem({
   quizCount,
   createdAt,
   isFavorite = false,
+  processingCount = 0,
   onClick,
   onDelete,
   onToggleFavorite,
   onEdit,
 }: InteractiveFolderProps) {
+  const isProcessing = processingCount > 0;
   return (
     <motion.div
-      className="group flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer hover:bg-muted/50 transition-colors border border-transparent hover:border-border/40 select-none"
+      className={cn(
+        "group flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer hover:bg-muted/50 transition-colors border select-none",
+        isProcessing ? "border-blue-500/20 bg-blue-500/5" : "border-transparent hover:border-border/40"
+      )}
       onClick={onClick}
       whileHover={{ x: 2 }}
       transition={{ type: "spring", stiffness: 300, damping: 30 }}
     >
       {/* ── Color icon ── */}
       <div
-        className="size-10 rounded-xl flex-shrink-0 flex items-center justify-center"
+        className="relative size-10 rounded-xl flex-shrink-0 flex items-center justify-center"
         style={{ background: withAlpha(color, 0.18) }}
       >
         <Folder className="size-5" style={{ color }} />
+        {isProcessing && (
+          <span className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-blue-400 animate-pulse" />
+        )}
       </div>
 
       {/* ── Info ── */}
       <div className="flex-1 min-w-0">
         <p className="font-medium text-sm truncate leading-tight">{name}</p>
-        {description ? (
+        {isProcessing ? (
+          <p className="text-xs text-blue-400 flex items-center gap-1">
+            <Loader2 className="size-3 animate-spin" />
+            Processing {processingCount} file{processingCount > 1 ? 's' : ''}...
+          </p>
+        ) : description ? (
           <p className="text-xs text-muted-foreground truncate">
             {description}
           </p>
@@ -541,9 +585,21 @@ export function FolderListItem({
       </div>
 
       {/* ── Meta ── */}
-      <Badge variant="secondary" className="shrink-0 text-[10px] px-1.5 py-0">
-        {quizCount === 0 ? "Empty" : `${quizCount} docs`}
-      </Badge>
+      {isProcessing ? (
+        <Badge variant="secondary" className="shrink-0 text-[9px] px-2 py-0 bg-blue-500/10 text-blue-600 border-blue-500/30 overflow-hidden relative shadow-[0_0_8px_rgba(59,130,246,0.2)] flex items-center">
+          <Sparkles className="size-2.5 animate-pulse mr-1" />
+          <span className="font-bold tracking-wider">SCANNING</span>
+          <motion.div
+            className="absolute inset-0 bg-gradient-to-r from-transparent via-blue-200/50 to-transparent skew-x-12"
+            animate={{ x: ['-200%', '400%'] }}
+            transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut', repeatDelay: 1 }}
+          />
+        </Badge>
+      ) : (
+        <Badge variant="secondary" className="shrink-0 text-[10px] px-1.5 py-0">
+          {quizCount === 0 ? "Empty" : `${quizCount} docs`}
+        </Badge>
+      )}
       {description && (
         <span className="text-xs text-muted-foreground hidden sm:block shrink-0 w-20 text-right">
           {formatDate(createdAt)}

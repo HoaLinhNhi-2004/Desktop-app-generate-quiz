@@ -598,5 +598,28 @@
       "questionCount": "Số câu",
       "notAttemptedLabel": "Chưa thử"
     }
+  },
+  "smartImport": {
+    "title": "Nhập thông minh",
+    "scanning": "Đang quét thư mục...",
+    "categorizing": "AI đang phân loại file...",
+    "importing": "Đang nhập file...",
+    "completed": "Nhập hoàn tất!",
+    "completedShort": "Xong",
+    "errorStatus": "Nhập thất bại",
+    "imported": "đã nhập",
+    "skippedLabel": "bỏ qua",
+    "newFolders": "mới",
+    "statusScanning": "Đang quét...",
+    "statusCategorizing": "AI phân tích...",
+    "statusDone": "Đã nhập",
+    "statusSkipped": "Bỏ qua",
+    "statusError": "Lỗi",
+    "dialogDesc": "Nhập đường dẫn tuyệt đối của thư mục chứa tài liệu học tập. AI sẽ tự động phân loại và tổ chức file vào các thư mục.",
+    "pathLabel": "Đường dẫn thư mục",
+    "pathPlaceholder": "D:\\\\Tài liệu\\\\Học tập",
+    "supportedFormats": "Hỗ trợ: PDF, DOCX, DOC, TXT, PPTX",
+    "starting": "Đang bắt đầu...",
+    "startBtn": "Bắt đầu nhập"
   }
 }

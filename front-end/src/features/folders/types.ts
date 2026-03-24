@@ -7,4 +7,5 @@ export interface Folder {
   quizCount: number;
   isFavorite: boolean;
   lastAccessedAt: string | null;
+  processingCount: number;
 }

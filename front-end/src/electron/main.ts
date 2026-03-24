@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, Menu } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, Menu } from "electron";
 import { ipcMainHandle, isDev } from "./util.js";
 import { getStationData, pollResource } from "./resourceManager.js";
 import { getPreloadPath, getUIPath } from "./pathResolver.js";
@@ -35,6 +35,16 @@ app.on("ready", async () => {
 
   ipcMainHandle("getStaticData", () => {
     return getStationData();
+  });
+
+  // Native folder picker for Smart Import
+  ipcMainHandle("selectFolder", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ["openDirectory"],
+      title: "Select folder to import",
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
   });
 
   // DevTools, reload, hard reload shortcuts

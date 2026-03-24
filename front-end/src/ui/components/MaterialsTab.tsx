@@ -137,12 +137,13 @@ function getProcessingBadge(record: UploadRecord) {
     default:
       return (
         <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-          <Loader2 className="size-3" />
-          {i18n.t("materials.pending")}
+          <Loader2 className="size-3 animate-spin" />
+          {i18n.t("materials.pending", "Pending...")}
         </span>
       );
   }
 }
+
 
 // ─── Upload Form ──────────────────────────────────────────────────────────────
 

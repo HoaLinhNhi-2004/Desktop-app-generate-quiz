@@ -10,7 +10,7 @@ class Folder(db.Model):
     __tablename__ = "folders"
 
     id = db.Column(db.String(36), primary_key=True)
-    name = db.Column(db.String(255), nullable=False)
+    name = db.Column(db.String(255), nullable=False, index=True)
     description = db.Column(db.Text, default="")
     color = db.Column(db.String(64), default="hsl(262 83% 58%)")
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
@@ -21,6 +21,12 @@ class Folder(db.Model):
 
     def to_dict(self):
         quiz_count = len(self.quiz_sets) if self.quiz_sets else 0
+        processing_count = 0
+        if self.uploaded_files:
+            processing_count = sum(
+                1 for f in self.uploaded_files
+                if f.processing_status in ("pending", "processing")
+            )
         return {
             "id": self.id,
             "name": self.name,
@@ -30,4 +36,6 @@ class Folder(db.Model):
             "quizCount": quiz_count,
             "isFavorite": bool(self.is_favorite),
             "lastAccessedAt": self.last_accessed_at.isoformat().replace("+00:00", "Z") if self.last_accessed_at else None,
+            "processingCount": processing_count,
         }
+

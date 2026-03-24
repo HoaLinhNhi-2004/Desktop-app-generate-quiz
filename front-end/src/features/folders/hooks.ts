@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { Folder } from "./types";
 import {
   getFoldersApi,
@@ -9,26 +9,82 @@ import {
   recordAccessApi,
 } from "./api";
 
+const PROCESSING_POLL_INTERVAL = 5000; // ms — poll interval when files are processing
+const FORCE_POLL_DURATION = 30_000;    // ms — keep polling after refresh to catch background processing
+
 export function useFolders() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const processingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const forcePollUntilRef = useRef<number>(0); // timestamp until which forced polling continues
+
+  const loadFolders = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await getFoldersApi();
+      setFolders(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load folders");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   // Fetch folders on mount
   useEffect(() => {
-    async function loadFolders() {
-      try {
-        setLoading(true);
-        const data = await getFoldersApi();
-        setFolders(data);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load folders");
-      } finally {
-        setLoading(false);
-      }
-    }
     loadFolders();
+  }, [loadFolders]);
+
+  const refreshFolders = useCallback(async () => {
+    try {
+      const data = await getFoldersApi();
+      setFolders(data);
+      // After a refresh (e.g. import completed), force polling for a period
+      // so we can catch background processing that starts after a slight delay
+      forcePollUntilRef.current = Date.now() + FORCE_POLL_DURATION;
+    } catch (err) {
+      console.error("Failed to refresh folders", err);
+    }
   }, []);
+
+  // Auto-poll when any folder has files being processed OR during forced polling window
+  useEffect(() => {
+    const hasProcessing = folders.some((f) => (f.processingCount ?? 0) > 0);
+    const isForcePolling = Date.now() < forcePollUntilRef.current;
+    const shouldPoll = hasProcessing || isForcePolling;
+
+    if (shouldPoll && !processingPollRef.current) {
+      processingPollRef.current = setInterval(async () => {
+        try {
+          const data = await getFoldersApi();
+          setFolders(data);
+          const stillProcessing = data.some((f: Folder) => (f.processingCount ?? 0) > 0);
+          const stillForced = Date.now() < forcePollUntilRef.current;
+          // Stop polling only if no processing AND force window expired
+          if (!stillProcessing && !stillForced) {
+            if (processingPollRef.current) {
+              clearInterval(processingPollRef.current);
+              processingPollRef.current = null;
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }, PROCESSING_POLL_INTERVAL);
+    } else if (!shouldPoll && processingPollRef.current) {
+      clearInterval(processingPollRef.current);
+      processingPollRef.current = null;
+    }
+
+    return () => {
+      if (processingPollRef.current) {
+        clearInterval(processingPollRef.current);
+        processingPollRef.current = null;
+      }
+    };
+  }, [folders]);
+
 
   const createFolder = useCallback(
     async (name: string, description?: string, color?: string) => {
@@ -101,5 +157,6 @@ export function useFolders() {
     updateFolder,
     toggleFavorite,
     recordAccess,
+    refreshFolders,
   };
 }

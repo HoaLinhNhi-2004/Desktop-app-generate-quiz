@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
@@ -22,14 +22,17 @@ import {
   List,
   Clock,
   Star,
+  FolderInput,
 } from "lucide-react";
 import { useFolders } from "@/features/folders";
+import { useSmartImport } from "@/features/smart-import";
 import { cn } from "@/lib/utils";
 import {
   InteractiveFolder,
   CreateFolderCard,
   FolderListItem,
 } from "../components/InteractiveFolder";
+import { SmartImportWidget } from "../components/SmartImportWidget";
 
 const FOLDER_COLORS = [
   "hsl(262 83% 58%)",
@@ -67,6 +70,7 @@ export function HomePage() {
     updateFolder,
     toggleFavorite,
     recordAccess,
+    refreshFolders,
   } = useFolders();
   const [open, setOpen] = useState(false);
   const [folderName, setFolderName] = useState("");
@@ -85,6 +89,48 @@ export function HomePage() {
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editColor, setEditColor] = useState(FOLDER_COLORS[0]);
+
+  // Smart Import
+  const smartImport = useSmartImport();
+  const [importOpen, setImportOpen] = useState(false);
+  const [importPath, setImportPath] = useState("");
+  const prevJobStatus = useRef<string | null>(null);
+
+  // Auto-refresh folder list when import job completes
+  useEffect(() => {
+    const currentStatus = smartImport.job?.status ?? null;
+    if (
+      prevJobStatus.current &&
+      prevJobStatus.current !== "completed" &&
+      prevJobStatus.current !== "cancelled" &&
+      (currentStatus === "completed" || currentStatus === "cancelled")
+    ) {
+      refreshFolders();
+    }
+    prevJobStatus.current = currentStatus;
+  }, [smartImport.job?.status, refreshFolders]);
+
+  const handleStartImport = () => {
+    const trimmed = importPath.trim();
+    if (!trimmed) return;
+    smartImport.startImport(trimmed);
+    setImportOpen(false);
+    setImportPath("");
+  };
+
+  const handleBrowseFolder = async () => {
+    // Try Electron native dialog first, fallback to manual input
+    if (window.electron?.selectFolder) {
+      try {
+        const selected = await window.electron.selectFolder();
+        if (selected) {
+          setImportPath(selected);
+        }
+      } catch {
+        // Fallback: user types path manually
+      }
+    }
+  };
 
   const [viewMode, setViewMode] = useState<"grid" | "list">(
     () =>
@@ -218,6 +264,73 @@ export function HomePage() {
             </p>
           </div>
 
+          <div className="flex items-center gap-2">
+            <Dialog open={importOpen} onOpenChange={setImportOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="gap-2"
+                  disabled={smartImport.isStarting || (smartImport.job !== null && smartImport.job.status !== "completed" && smartImport.job.status !== "error")}
+                >
+                  <FolderInput className="size-4" />
+                  {t("home.importFolder", "Import Folder")}
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[480px]">
+                <DialogHeader>
+                  <DialogTitle>{t("smartImport.title", "Smart Import")}</DialogTitle>
+                  <DialogDescription>
+                    {t("smartImport.dialogDesc", "Enter the absolute path of the folder containing your study materials. AI will automatically categorize and organize files into folders.")}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="flex flex-col gap-3 py-2">
+                  <div className="flex flex-col gap-1.5">
+                    <Label>{t("smartImport.pathLabel", "Folder Path")}</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder={t("smartImport.pathPlaceholder", "D:\\Documents\\Study Materials")}
+                        value={importPath}
+                        onChange={(e) => setImportPath(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleStartImport();
+                        }}
+                        autoFocus
+                        className="flex-1"
+                      />
+                      {window.electron?.selectFolder && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={handleBrowseFolder}
+                          title={t("smartImport.browse", "Browse")}
+                        >
+                          <FolderInput className="size-4" />
+                        </Button>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {t("smartImport.supportedFormats", "Supports: PDF, DOCX, DOC, TXT, PPTX")}
+                    </p>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="ghost" onClick={() => setImportOpen(false)}>
+                    {t("common.cancel")}
+                  </Button>
+                  <Button
+                    onClick={handleStartImport}
+                    disabled={!importPath.trim() || smartImport.isStarting}
+                    className="gap-2"
+                  >
+                    <FolderInput className="size-4" />
+                    {smartImport.isStarting
+                      ? t("smartImport.starting", "Starting...")
+                      : t("smartImport.startBtn", "Start Import")}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2">
@@ -291,6 +404,7 @@ export function HomePage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          </div>
         </motion.div>
 
         {/* ── Toolbar: tabs + view toggle ── */}
@@ -463,6 +577,7 @@ export function HomePage() {
                       quizCount={folder.quizCount}
                       createdAt={folder.createdAt}
                       isFavorite={folder.isFavorite}
+                      processingCount={folder.processingCount}
                       onClick={() => {
                         recordAccess(folder.id);
                         navigate(`/folder/${folder.id}`);
@@ -518,6 +633,7 @@ export function HomePage() {
                       quizCount={folder.quizCount}
                       createdAt={folder.createdAt}
                       isFavorite={folder.isFavorite}
+                      processingCount={folder.processingCount}
                       onClick={() => {
                         recordAccess(folder.id);
                         navigate(`/folder/${folder.id}`);
@@ -605,6 +721,18 @@ export function HomePage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Smart Import Widget (Google Drive style) */}
+      <SmartImportWidget
+        job={smartImport.job}
+        isMinimized={smartImport.isMinimized}
+        onMinimize={() => smartImport.setIsMinimized(true)}
+        onExpand={() => smartImport.setIsMinimized(false)}
+        onDismiss={smartImport.dismiss}
+        onPause={smartImport.pauseImport}
+        onResume={smartImport.resumeImport}
+        onCancel={smartImport.cancelImport}
+      />
     </ScrollArea>
   );
 }

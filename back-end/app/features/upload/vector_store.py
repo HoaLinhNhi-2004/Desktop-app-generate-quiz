@@ -6,33 +6,53 @@ Stores document chunks with metadata for retrieval during quiz generation.
 """
 
 import os
+import time
 import logging
+import threading
 
 import chromadb
 
 logger = logging.getLogger(__name__)
 
 _client: chromadb.ClientAPI | None = None
+_client_lock = threading.Lock()
 
 COLLECTION_NAME = "document_chunks"
 
 
 def _get_client() -> chromadb.ClientAPI:
-    """Get or create a persistent ChromaDB client."""
+    """Get or create a persistent ChromaDB client (thread-safe)."""
     global _client
     if _client is not None:
         return _client
 
-    from flask import current_app
-    db_path = current_app.config.get("CHROMADB_PATH", "")
-    if not db_path:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        db_path = os.path.join(base_dir, "..", "..", "instance", "chromadb")
+    with _client_lock:
+        # Double-check after acquiring lock
+        if _client is not None:
+            return _client
 
-    os.makedirs(db_path, exist_ok=True)
-    _client = chromadb.PersistentClient(path=db_path)
-    logger.info("ChromaDB initialized at %s", db_path)
-    return _client
+        from flask import current_app
+        db_path = current_app.config.get("CHROMADB_PATH", "")
+        if not db_path:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            db_path = os.path.join(base_dir, "..", "..", "instance", "chromadb")
+
+        db_path = os.path.abspath(db_path)
+        os.makedirs(db_path, exist_ok=True)
+
+        # ChromaDB v1.x uses Rust bindings with a shared system singleton.
+        # Retry if initialization fails due to race conditions.
+        last_err = None
+        for attempt in range(3):
+            try:
+                _client = chromadb.PersistentClient(path=db_path)
+                logger.info("ChromaDB initialized at %s", db_path)
+                return _client
+            except (ValueError, KeyError, AttributeError) as e:
+                last_err = e
+                logger.warning("ChromaDB init attempt %d failed: %s", attempt + 1, e)
+                time.sleep(0.5 * (attempt + 1))
+        raise RuntimeError(f"Failed to initialize ChromaDB after 3 attempts: {last_err}")
 
 
 def _get_collection():

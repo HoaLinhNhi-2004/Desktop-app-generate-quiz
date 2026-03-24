@@ -162,6 +162,9 @@ def create_app(config_class=None):
     from app.features.api_keys.routes import api_keys_bp
     app.register_blueprint(api_keys_bp, url_prefix="/api/keys")
 
+    from app.features.folder.smart_import_routes import smart_import_bp
+    app.register_blueprint(smart_import_bp, url_prefix="/api/folders")
+
     # Health check route
     @app.route("/api/health")
     def health():

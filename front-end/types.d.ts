@@ -11,6 +11,7 @@ type EventPayloadMapping = {
   getStaticData: StaticData;
   changeView: View;
   sendFrameAction: FrameWindowAction;
+  selectFolder: string | null;
 };
 
 type UnsubscribeFunction = () => void;
@@ -18,6 +19,7 @@ type UnsubscribeFunction = () => void;
 interface Window {
   electron: {
     subscribeStatistics: (callback: (statistics: Statistics) => void) => UnsubscribeFunction,
-    getStaticData: () => Promise<StationData>
+    getStaticData: () => Promise<StationData>,
+    selectFolder?: () => Promise<string | null>,
   }
-}
+}

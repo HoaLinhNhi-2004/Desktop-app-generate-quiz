@@ -598,5 +598,28 @@
       "questionCount": "Questions",
       "notAttemptedLabel": "Not attempted"
     }
+  },
+  "smartImport": {
+    "title": "Smart Import",
+    "scanning": "Scanning directory...",
+    "categorizing": "AI categorizing files...",
+    "importing": "Importing files...",
+    "completed": "Import completed!",
+    "completedShort": "Done",
+    "errorStatus": "Import failed",
+    "imported": "imported",
+    "skippedLabel": "skipped",
+    "newFolders": "new",
+    "statusScanning": "Scanning...",
+    "statusCategorizing": "AI analyzing...",
+    "statusDone": "Imported",
+    "statusSkipped": "Skipped",
+    "statusError": "Error",
+    "dialogDesc": "Enter the absolute path of the folder containing your study materials. AI will automatically categorize and organize files into folders.",
+    "pathLabel": "Folder Path",
+    "pathPlaceholder": "D:\\Documents\\Study Materials",
+    "supportedFormats": "Supports: PDF, DOCX, DOC, TXT, PPTX",
+    "starting": "Starting...",
+    "startBtn": "Start Import"
   }
 }

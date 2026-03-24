@@ -60,3 +60,10 @@ pnpm-debug.log*
 
 welcome/
 *.xlsx
+
+# ─── Feature Proposals (Local Only) ──────────────────────────────────────────────
+online_exam_proposal.md
+docs/online_exam_proposal.md
+auto_dataset_builder_proposal.md
+docs/auto_dataset_builder_proposal.md
+docs/smart_folder_import_proposal.md
