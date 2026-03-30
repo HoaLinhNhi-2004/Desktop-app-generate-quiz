@@ -672,6 +672,304 @@ def generate_quiz(
         raise RuntimeError(f"Failed to generate quiz: {str(e)}") from e
 
 
+def _build_import_prompt(text: str, language: str = "vi") -> str:
+    """
+    Build a specialized extraction prompt for Smart Quiz Import.
+    
+    Unlike _build_prompt(), this does NOT ask Gemini to create new questions.
+    Instead, it instructs Gemini to recognize and extract ALL existing Q&A
+    from the provided text, preserving them verbatim.
+    """
+    lang = "Vietnamese" if language == "vi" else "English"
+    
+    prompt = f"""Bạn là một chuyên gia nhận diện và trích xuất dữ liệu.
+Nhiệm vụ của bạn là đọc nội dung văn bản dưới đây, nhận diện TẤT CẢ các câu hỏi kèm theo câu trả lời (nếu có) và xuất chúng ra định dạng JSON.
+
+HƯỚNG DẪN QUAN TRỌNG:
+1. KHÔNG sáng tác hay tóm tắt nội dung. Hãy GIỮ NGUYÊN văn bản của câu hỏi và các đáp án.
+2. NHẬN DIỆN số lượng câu hỏi tùy ý. Bạn phải bóc tách TẤT CẢ câu hỏi có trong văn bản (không giới hạn 10 câu).
+3. SUY LUẬN đáp án đúng: Nếu trong văn bản đáp án đúng được làm nổi bật (bôi đậm, gạch dưới, có dấu *, hoặc nằm ở phần "Đáp án" cuối file), hãy tự động gán đáp án đúng vào id tương ứng. Nếu không thể suy luận được đáp án, hãy đánh dấu phần "correctAnswerId" là chuỗi rỗng "".
+4. Phân loại câu hỏi: Dựa vào cấu trúc, nếu câu có nhiều lựa chọn (A,B,C,D) hãy gán type = "multiple-choice". Nếu câu hỏi có 2 đáp án đúng trở lên, gán type = "multiple-answer" và dùng correctAnswerIds thay vì correctAnswerId.
+5. Output language: {lang}
+
+ĐẦU RA:
+Trả về duy nhất một mảng JSON tuân theo cấu trúc sau, không kèm giải thích hay markdown:
+[
+  {{
+    "type": "multiple-choice",
+    "questionText": "Nội dung câu hỏi",
+    "options": [
+      {{"id": "a", "text": "Nội dung đáp án A"}},
+      {{"id": "b", "text": "Nội dung đáp án B"}},
+      {{"id": "c", "text": "Nội dung đáp án C"}},
+      {{"id": "d", "text": "Nội dung đáp án D"}}
+    ],
+    "correctAnswerId": "a",
+    "explanation": "Câu giải thích nếu có trong bài"
+  }}
+]
+
+Nội dung văn bản gốc:
+---------
+{text}
+---------"""
+    return prompt
+
+
+def import_quiz_from_text(
+    text: str,
+    language: str = "vi",
+    gemini_api_key: str = "",
+    model_chain: list[str] | None = None,
+) -> tuple[list[dict], dict]:
+    """
+    Extract existing quiz questions from text using Google Gemini.
+    
+    Unlike generate_quiz(), this function does NOT create new questions.
+    It extracts and parses existing Q&A content from the source text.
+    
+    Returns:
+        (questions, token_usage)
+    """
+    if not model_chain:
+        model_chain = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
+
+    logger.info(
+        "import_quiz_from_text: %d chars | lang=%s",
+        len(text), language,
+    )
+
+    token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "models": {}}
+    
+    try:
+        # Split text into chunks if too long
+        chunks = _split_into_chunks(text, _MAX_CHUNK_SIZE)
+        
+        if len(chunks) > _MAX_PARALLEL_CHUNKS:
+            # Merge tail chunks
+            merged: list[str] = []
+            per = len(chunks) // _MAX_PARALLEL_CHUNKS
+            for i in range(_MAX_PARALLEL_CHUNKS):
+                start = i * per
+                end = start + per if i < _MAX_PARALLEL_CHUNKS - 1 else len(chunks)
+                merged.append("\n\n".join(chunks[start:end]))
+            chunks = merged
+
+        n = len(chunks)
+        all_questions: list[dict] = []
+
+        logger.info("Import extraction: %d chunks, text=%d chars", n, len(text))
+
+        import threading
+        _tok_lock = threading.Lock()
+
+        def _import_worker(idx: int, chunk: str) -> list[dict]:
+            logger.info("  Import chunk %d/%d: %d chars", idx + 1, n, len(chunk))
+            prompt = _build_import_prompt(chunk, language)
+            max_tok = 65_536  # generous for extraction
+            
+            _save_debug_file(
+                f"import_prompt_chunk{idx+1}of{n}",
+                prompt,
+                meta=f"# Import chunk {idx+1}/{n} | lang={language} | chars={len(chunk)}",
+            )
+            
+            for attempt in range(3):
+                try:
+                    raw, model_used, tok = _generate_with_fallback(
+                        prompt, gemini_api_key, model_chain,
+                        max_output_tokens=max_tok,
+                    )
+                    in_tok = tok.get("input_tokens", 0)
+                    out_tok = tok.get("output_tokens", 0)
+                    with _tok_lock:
+                        token_usage["input_tokens"] += in_tok
+                        token_usage["output_tokens"] += out_tok
+                        if model_used not in token_usage["models"]:
+                            token_usage["models"][model_used] = {"requests": 0, "input_tokens": 0, "output_tokens": 0}
+                        token_usage["models"][model_used]["requests"] += 1
+                        token_usage["models"][model_used]["input_tokens"] += in_tok
+                        token_usage["models"][model_used]["output_tokens"] += out_tok
+                    
+                    _save_debug_file(
+                        f"import_response_chunk{idx+1}of{n}",
+                        raw,
+                        meta=f"# Import chunk {idx+1}/{n} | model={model_used} | attempt={attempt + 1}",
+                    )
+                    
+                    # Parse with relaxed validation for import mode
+                    qs = _parse_import_response(raw)
+                    logger.info(
+                        "  Import chunk %d/%d: got %d questions via %s",
+                        idx + 1, n, len(qs), model_used,
+                    )
+                    return qs
+                except (ValueError, Exception) as e:
+                    if attempt < 2:
+                        logger.warning(
+                            "  Import chunk %d/%d: parse error (attempt %d/3): %s",
+                            idx + 1, n, attempt + 1, e,
+                        )
+                    else:
+                        logger.error(
+                            "  Import chunk %d/%d: failed after 3 attempts: %s",
+                            idx + 1, n, e,
+                        )
+            return []
+
+        if n == 1:
+            all_questions = _import_worker(0, chunks[0])
+        else:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=min(n, _MAX_PARALLEL_CHUNKS)) as pool:
+                futures = {pool.submit(_import_worker, i, chunk): i for i, chunk in enumerate(chunks)}
+                chunk_results: dict[int, list[dict]] = {}
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    try:
+                        chunk_results[idx] = future.result()
+                    except Exception as e:
+                        logger.warning("Import chunk %d failed: %s", idx + 1, e)
+                        chunk_results[idx] = []
+                for i in range(n):
+                    all_questions.extend(chunk_results.get(i, []))
+
+        # Deduplicate
+        deduped = _deduplicate_questions(all_questions)
+        
+        # Assign IDs and question numbers
+        for i, q in enumerate(deduped):
+            q["id"] = f"q{i+1}_{uuid.uuid4().hex[:6]}"
+            q["questionNumber"] = i + 1
+
+        token_usage["total_tokens"] = token_usage["input_tokens"] + token_usage["output_tokens"]
+        
+        logger.info(
+            "Import: extracted %d questions (after dedup=%d) | tokens: in=%d out=%d",
+            len(all_questions), len(deduped),
+            token_usage["input_tokens"], token_usage["output_tokens"],
+        )
+        return deduped, token_usage
+
+    except Exception as e:
+        logger.error("Quiz import error: %s", e)
+        raise RuntimeError(f"Failed to import quiz: {str(e)}") from e
+
+
+def _parse_import_response(raw_text: str) -> list[dict]:
+    """
+    Parse Gemini response for import mode.
+    More lenient than _parse_response — accepts questions without correctAnswerId
+    (sets it to empty string if missing).
+    """
+    # Strip markdown code fences
+    cleaned = re.sub(r"```(?:json)?\s*", "", raw_text).strip()
+    cleaned = re.sub(r"```\s*$", "", cleaned).strip()
+
+    questions = None
+
+    # Try direct JSON parse
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, list):
+            questions = parsed
+        elif isinstance(parsed, dict):
+            for key in ("questions", "quiz", "items", "data", "results"):
+                if key in parsed and isinstance(parsed[key], list):
+                    questions = parsed[key]
+                    break
+            if questions is None:
+                for v in parsed.values():
+                    if isinstance(v, list):
+                        questions = v
+                        break
+    except json.JSONDecodeError:
+        pass
+
+    # Regex fallback: find outermost JSON array
+    if questions is None:
+        match = re.search(r"(\[[\s\S]*\])", cleaned)
+        if match:
+            try:
+                questions = json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+    if questions is None:
+        logger.error("Could not extract JSON from import response. First 500 chars:\n%s", raw_text[:500])
+        raise ValueError("No JSON array found in import response")
+
+    if not isinstance(questions, list):
+        raise ValueError("Import response is not a list of questions")
+
+    # Validate with lenient rules
+    validated = []
+    for q in questions:
+        try:
+            vq = _validate_import_question(q)
+            validated.append(vq)
+        except Exception as e:
+            logger.warning("Skipping invalid imported question: %s", e)
+            continue
+
+    return validated
+
+
+def _validate_import_question(q: dict) -> dict:
+    """
+    Validate a single imported question. More lenient than _validate_question:
+    - correctAnswerId can be empty (unknown answer)
+    - Does not check for ambiguous options
+    """
+    if "questionText" not in q or not q["questionText"]:
+        raise ValueError("Missing questionText")
+    
+    options = q.get("options", [])
+    if not isinstance(options, list) or len(options) < 2:
+        raise ValueError("Options must have at least 2 items")
+
+    # Normalize option IDs
+    for opt in options:
+        if "id" not in opt or "text" not in opt:
+            raise ValueError("Each option must have 'id' and 'text'")
+        opt["id"] = str(opt["id"]).lower()
+
+    option_ids = [opt["id"] for opt in options]
+
+    q_type = q.get("type", "multiple-choice")
+    if q_type not in ("multiple-choice", "multiple-answer", "true-false", "fill-blank"):
+        q_type = "multiple-choice"
+
+    # Handle correctAnswerId — can be empty for import mode
+    correct_id = str(q.get("correctAnswerId", "")).lower().strip()
+    correct_ids = []
+    
+    if q_type == "multiple-answer":
+        raw_ids = q.get("correctAnswerIds", [])
+        if isinstance(raw_ids, str):
+            raw_ids = [raw_ids]
+        correct_ids = [str(cid).lower() for cid in raw_ids if cid]
+        correct_id = correct_ids[0] if correct_ids else ""
+    else:
+        # Validate correctAnswerId if present
+        if correct_id and correct_id not in option_ids:
+            correct_id = ""  # Reset if invalid
+
+    result = {
+        "type": q_type,
+        "questionText": q["questionText"],
+        "options": options,
+        "correctAnswerId": correct_id,
+        "explanation": q.get("explanation", ""),
+        "sourcePages": [],
+        "sourceKeyword": [],
+    }
+    if q_type == "multiple-answer" and correct_ids:
+        result["correctAnswerIds"] = correct_ids
+    
+    return result
+
+
 def _build_prompt(
     text: str,
     num_questions: int,

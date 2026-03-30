@@ -41,6 +41,7 @@ export interface GenerateQuizOptions {
   rawText?: string;
   folderId?: string;
   reusedFileIds?: string[];
+  action?: "generate" | "import";
 }
 
 function _appendConfig(formData: FormData, config: QuizConfig) {
@@ -66,10 +67,12 @@ export async function generateQuizApi(
     rawText,
     folderId,
     reusedFileIds,
+    action = "generate",
   } = options;
   const formData = new FormData();
 
   formData.append("inputType", inputMode);
+  formData.append("action", action);
   if (folderId) formData.append("folderId", folderId);
   _appendConfig(formData, config);
 

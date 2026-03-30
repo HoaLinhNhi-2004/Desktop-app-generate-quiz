@@ -671,6 +671,7 @@ def generate_quiz():
 
     Expects multipart/form-data with:
       - inputType: 'files' (default) | 'youtube' | 'text'
+      - action: 'generate' (default) | 'import'
       For inputType=files:
         - files: one or more files (PDF / DOCX / images)
       For inputType=youtube:
@@ -686,8 +687,11 @@ def generate_quiz():
       { quizSetId, questions, extractedText, totalTextLength, filesProcessed, config, inputType }
     """
     input_type = (request.form.get("inputType") or "files").strip().lower()
+    action = (request.form.get("action") or "generate").strip().lower()
     if input_type not in {"files", "youtube", "text"}:
         return jsonify({"error": f"Invalid inputType: {input_type}"}), 400
+    if action not in {"generate", "import"}:
+        return jsonify({"error": f"Invalid action: {action}"}), 400
 
     # Validate file presence only for files mode
     files = request.files.getlist("files") if input_type == "files" else []
@@ -775,57 +779,61 @@ def generate_quiz():
             }.get(input_type, "No text content found")
             return jsonify({"error": msg}), 422
 
-        # Step 1c: Validate text quality + cap question count
-        quality_error, config["numberOfQuestions"] = _validate_text_quality(
-            combined_text, config["numberOfQuestions"]
-        )
-        if quality_error:
-            return jsonify({"error": quality_error}), 422
-
-        # Step 1b: Condense the source text into a quiz-ready representation.
-        #
-        # YouTube (long transcripts):
-        #   2-pass approach — summarize the full transcript into a ~8 000-char outline
-        #   (Pass 1). This fixes ASR errors, covers the whole video, and reduces token
-        #   usage by 80-90% versus sending the raw transcript to the quiz generator.
-        #   Then generate quiz from the outline (Pass 2).
-        #
-        # Files / raw text:
-        #   Smart chunk selection — score each chunk by technical density and pick
-        #   the most content-rich chunks (up to 40 000 chars total).
-        from app.features.quizz.text_processing import filter_boilerplate, clean_text, chunk_text, select_important_chunks
-
-        if input_type == "youtube":
-            # Pass 1: summarize full transcript → dense outline
-            from app.features.quizz.youtube_service import summarize_transcript
-            logger.info("Summarizing YouTube transcript (%d chars) before quiz generation", len(combined_text))
-            quiz_text = summarize_transcript(
-                combined_text,
-                api_key=gemini_key,
+        # ── Branch: Import mode vs Generate mode ───────────────────────
+        if action == "import":
+            # Import mode: extract existing Q&A from the text, no generation
+            from app.features.quizz.text_processing import clean_text
+            cleaned = clean_text(combined_text)
+            # For import, we send the FULL text (not filtered/chunked) to preserve
+            # question numbering, answer markers, and other structural cues.
+            from app.features.quizz.quiz_generator import import_quiz_from_text
+            questions, token_usage = import_quiz_from_text(
+                text=combined_text,
+                language=config.get("language", "vi"),
+                gemini_api_key=gemini_key,
                 model_chain=fallback_chain,
             )
-            cleaned = quiz_text  # summary is already clean
         else:
-            # Files / text: filter boilerplate + smart-chunk selection
-            filtered = filter_boilerplate(combined_text)
-            cleaned = clean_text(filtered)
-            chunks = chunk_text(cleaned, max_chunk_size=8000)
-            selected_chunks = select_important_chunks(chunks, n=6)
-            quiz_text = "\n\n".join(selected_chunks)
-            if len(quiz_text) > 40_000:
-                quiz_text = quiz_text[:40_000]
+            # Generate mode (original flow)
+            # Step 1c: Validate text quality + cap question count
+            quality_error, config["numberOfQuestions"] = _validate_text_quality(
+                combined_text, config["numberOfQuestions"]
+            )
+            if quality_error:
+                return jsonify({"error": quality_error}), 422
 
-        # Step 3: Generate quiz with LLM (auto-fallback on 429)
-        from app.features.quizz.quiz_generator import generate_quiz as gen_quiz
-        questions, token_usage = gen_quiz(
-            text=quiz_text,
-            num_questions=config["numberOfQuestions"],
-            question_type=config["questionType"],
-            difficulty=config["difficulty"],
-            language=config["language"],
-            gemini_api_key=gemini_key,
-            model_chain=fallback_chain,
-        )
+            # Step 1b: Condense the source text into a quiz-ready representation.
+            from app.features.quizz.text_processing import filter_boilerplate, clean_text, chunk_text, select_important_chunks
+
+            if input_type == "youtube":
+                from app.features.quizz.youtube_service import summarize_transcript
+                logger.info("Summarizing YouTube transcript (%d chars) before quiz generation", len(combined_text))
+                quiz_text = summarize_transcript(
+                    combined_text,
+                    api_key=gemini_key,
+                    model_chain=fallback_chain,
+                )
+                cleaned = quiz_text
+            else:
+                filtered = filter_boilerplate(combined_text)
+                cleaned = clean_text(filtered)
+                chunks = chunk_text(cleaned, max_chunk_size=8000)
+                selected_chunks = select_important_chunks(chunks, n=6)
+                quiz_text = "\n\n".join(selected_chunks)
+                if len(quiz_text) > 40_000:
+                    quiz_text = quiz_text[:40_000]
+
+            # Step 3: Generate quiz with LLM (auto-fallback on 429)
+            from app.features.quizz.quiz_generator import generate_quiz as gen_quiz
+            questions, token_usage = gen_quiz(
+                text=quiz_text,
+                num_questions=config["numberOfQuestions"],
+                question_type=config["questionType"],
+                difficulty=config["difficulty"],
+                language=config["language"],
+                gemini_api_key=gemini_key,
+                model_chain=fallback_chain,
+            )
 
         # Record token usage to the key in DB (runs in main request thread)
         if active_key_id and token_usage:

@@ -163,13 +163,13 @@ All contributions are welcome! Please:
 
 MIT License — see [LICENSE](LICENSE) for more details.
 
-## 🔐 Code signing policy
+<!-- ## 🔐 Code signing policy
 
 Free code signing provided by [SignPath.io](https://signpath.io), certificate by SignPath Foundation.
 
 **Team roles:**
 * Committers and reviewers: [Project Maintainers](https://github.com/HoangLong08)
-* Approvers: [Project Owners](https://github.com/HoangLong08)
+* Approvers: [Project Owners](https://github.com/HoangLong08) -->
 
 ### Privacy Policy
 This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. (Note: The application sends user-provided documents to Google Gemini API only when the user explicitly triggers the quiz generation process using their own provided API key).

@@ -43,6 +43,7 @@ import {
   ScanText,
   BookOpenCheck,
   Edit3,
+  FileSearch,
 } from "lucide-react";
 import { PdfQuizViewer } from "../components/PdfQuizViewer";
 import { TextSourceViewer } from "../components/TextSourceViewer";
@@ -759,6 +760,7 @@ export function FolderDetailPage() {
 
   const [config, setConfig] = useState<QuizConfig>(DEFAULT_CONFIG);
   const [reusedFileIds, setReusedFileIds] = useState<string[]>([]);
+  const [quizAction, setQuizAction] = useState<"generate" | "import">("generate");
 
   const generateQuiz = useGenerateQuiz();
 
@@ -781,6 +783,7 @@ export function FolderDetailPage() {
           rawText: "",
           folderId: id,
           reusedFileIds,
+          action: quizAction,
         },
         config,
       },
@@ -795,6 +798,25 @@ export function FolderDetailPage() {
               description: `Input: ${t.input_tokens.toLocaleString()} · Output: ${t.output_tokens.toLocaleString()} · Total: ${t.total_tokens.toLocaleString()} tokens`,
               duration: 6000,
             });
+          }
+
+          // Check for questions without correct answers (import mode)
+          if (quizAction === "import") {
+            const noAnswerCount = data.questions.filter(
+              (q: QuizQuestion) => !q.correctAnswerId
+            ).length;
+            if (noAnswerCount > 0) {
+              toast.warning(
+                t("smartImportQuiz.missingAnswersTitle", { defaultValue: "Câu hỏi chưa có đáp án" }),
+                {
+                  description: t("smartImportQuiz.missingAnswersDesc", {
+                    count: noAnswerCount,
+                    defaultValue: `Có ${noAnswerCount} câu hỏi chưa có đáp án đúng. Vui lòng cập nhật thủ công.`,
+                  }),
+                  duration: 10000,
+                },
+              );
+            }
           }
 
           navigate("/quiz", {
@@ -905,16 +927,75 @@ export function FolderDetailPage() {
                   </CardDescription>
                 </CardHeader>
 
+                {/* Mode Toggle: Generate vs Import */}
+                <div className="px-6 pb-3">
+                  <div className="flex rounded-lg border bg-muted/30 p-1 gap-1">
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex-1 flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-all",
+                        quizAction === "generate"
+                          ? "bg-background shadow-sm text-foreground"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                      onClick={() => setQuizAction("generate")}
+                    >
+                      <Sparkles className="size-3.5" />
+                      {t("smartImportQuiz.modeGenerate", { defaultValue: "Tạo từ tài liệu" })}
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex-1 flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-all",
+                        quizAction === "import"
+                          ? "bg-background shadow-sm text-foreground"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                      onClick={() => setQuizAction("import")}
+                    >
+                      <FileSearch className="size-3.5" />
+                      {t("smartImportQuiz.modeImport", { defaultValue: "Trích xuất đề thi" })}
+                    </button>
+                  </div>
+                  {quizAction === "import" && (
+                    <p className="mt-2 text-[11px] text-muted-foreground leading-relaxed">
+                      {t("smartImportQuiz.importHint", {
+                        defaultValue:
+                          "AI sẽ tự động nhận diện và trích xuất nguyên bộ câu hỏi từ file đề thi. Số lượng, loại câu hỏi và độ khó sẽ được xác định tự động.",
+                      })}
+                    </p>
+                  )}
+                </div>
+
                 {/* Config body — scrolls internally so footer stays visible */}
                 <CardContent className="flex-1 min-h-0 p-0">
-                  <ScrollArea className="h-full">
-                    <div className="px-6 pb-4">
-                      <QuizConfigPanel
-                        config={config}
-                        onConfigChange={setConfig}
-                      />
+                  {quizAction === "generate" ? (
+                    <ScrollArea className="h-full">
+                      <div className="px-6 pb-4">
+                        <QuizConfigPanel
+                          config={config}
+                          onConfigChange={setConfig}
+                        />
+                      </div>
+                    </ScrollArea>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center gap-3 h-full px-6 text-center">
+                      <div className="flex size-14 items-center justify-center rounded-full bg-primary/10">
+                        <FileSearch className="size-7 text-primary" />
+                      </div>
+                      <p className="text-sm font-medium">
+                        {t("smartImportQuiz.importReadyTitle", {
+                          defaultValue: "Q&A Document",
+                        })}
+                      </p>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {t("smartImportQuiz.importReadyDesc", {
+                          defaultValue:
+                            "Chọn file chứa đề thi bên trái, AI sẽ tự động trích xuất tất cả câu hỏi và đáp án.",
+                        })}
+                      </p>
                     </div>
-                  </ScrollArea>
+                  )}
                 </CardContent>
 
                 {/* Buttons always anchored at the bottom of the card */}
@@ -924,7 +1005,9 @@ export function FolderDetailPage() {
                     className={cn(
                       "w-full gap-2 text-base font-semibold transition-all",
                       inputReady
-                        ? "bg-linear-to-r from-primary to-primary/80 shadow-lg shadow-primary/25 hover:shadow-xl hover:shadow-primary/30"
+                        ? quizAction === "import"
+                          ? "bg-linear-to-r from-amber-500 to-orange-500 shadow-lg shadow-orange-500/25 hover:shadow-xl hover:shadow-orange-500/30 text-white"
+                          : "bg-linear-to-r from-primary to-primary/80 shadow-lg shadow-primary/25 hover:shadow-xl hover:shadow-primary/30"
                         : "",
                     )}
                     disabled={!inputReady || generateQuiz.isPending}
@@ -933,12 +1016,20 @@ export function FolderDetailPage() {
                     {generateQuiz.isPending ? (
                       <>
                         <Loader2 className="size-5 animate-spin" />
-                        {t("folder.generating")}
+                        {quizAction === "import"
+                          ? t("smartImportQuiz.importing", { defaultValue: "Đang trích xuất..." })
+                          : t("folder.generating")}
                       </>
                     ) : (
                       <>
-                        <Sparkles className="size-5" />
-                        {t("folder.createQuizBtn")}
+                        {quizAction === "import" ? (
+                          <FileSearch className="size-5" />
+                        ) : (
+                          <Sparkles className="size-5" />
+                        )}
+                        {quizAction === "import"
+                          ? t("smartImportQuiz.importBtn", { defaultValue: "Trích xuất câu hỏi" })
+                          : t("folder.createQuizBtn")}
                         <ArrowRight className="size-4" />
                       </>
                     )}
