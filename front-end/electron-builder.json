@@ -21,7 +21,7 @@
     "owner": "HoangLong08",
     "repo": "Desktop-app-generate-quiz"
   },
-  "mac": { "target": "zip" },
-  "linux": { "target": "zip", "category": "Utility" },
-  "win": { "target": "zip" }
+  "mac": { "target": "zip", "icon": "src/assets/trayIcon.png" },
+  "linux": { "target": "zip", "category": "Utility", "icon": "src/assets/trayIcon.png" },
+  "win": { "target": "zip", "icon": "src/assets/trayIcon.png" }
 }

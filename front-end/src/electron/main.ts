@@ -1,7 +1,8 @@
 import { app, BrowserWindow, dialog, globalShortcut, Menu, session } from "electron";
+import path from "node:path";
 import { ipcMainHandle, isDev } from "./util.js";
 import { getStationData, pollResource } from "./resourceManager.js";
-import { getPreloadPath, getUIPath } from "./pathResolver.js";
+import { getAssetsPath, getPreloadPath, getUIPath } from "./pathResolver.js";
 import { killBackend, startBackend } from "./backendManager.js";
 import type { ChildProcess } from "node:child_process";
 
@@ -63,6 +64,7 @@ app.on("ready", async () => {
 
   const mainWindow = new BrowserWindow({
     title: "Generate Quiz",
+    icon: path.join(getAssetsPath(), "trayIcon.png"),
     autoHideMenuBar: true,
     webPreferences: {
       preload: getPreloadPath(),
