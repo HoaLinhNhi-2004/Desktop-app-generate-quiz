@@ -25,14 +25,13 @@ import {
   FolderInput,
 } from "lucide-react";
 import { useFolders } from "@/features/folders";
-import { useSmartImport } from "@/features/smart-import";
+import { useSmartImportContext } from "@/features/smart-import";
 import { cn } from "@/lib/utils";
 import {
   InteractiveFolder,
   CreateFolderCard,
   FolderListItem,
 } from "../components/InteractiveFolder";
-import { SmartImportWidget } from "../components/SmartImportWidget";
 
 const FOLDER_COLORS = [
   "hsl(262 83% 58%)",
@@ -90,8 +89,8 @@ export function HomePage() {
   const [editDesc, setEditDesc] = useState("");
   const [editColor, setEditColor] = useState(FOLDER_COLORS[0]);
 
-  // Smart Import
-  const smartImport = useSmartImport();
+  // Smart Import (state lifted to App-level context so widget persists across pages)
+  const smartImport = useSmartImportContext();
   const [importOpen, setImportOpen] = useState(false);
   const [importPath, setImportPath] = useState("");
   const prevJobStatus = useRef<string | null>(null);
@@ -722,17 +721,6 @@ export function HomePage() {
         </DialogContent>
       </Dialog>
 
-      {/* Smart Import Widget (Google Drive style) */}
-      <SmartImportWidget
-        job={smartImport.job}
-        isMinimized={smartImport.isMinimized}
-        onMinimize={() => smartImport.setIsMinimized(true)}
-        onExpand={() => smartImport.setIsMinimized(false)}
-        onDismiss={smartImport.dismiss}
-        onPause={smartImport.pauseImport}
-        onResume={smartImport.resumeImport}
-        onCancel={smartImport.cancelImport}
-      />
     </ScrollArea>
   );
 }

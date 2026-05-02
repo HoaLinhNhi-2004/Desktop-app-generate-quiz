@@ -8,7 +8,7 @@ import {
   cancelImportApi,
 } from "./api";
 
-const POLL_INTERVAL = 1500; // ms
+const POLL_INTERVAL = 1500;
 
 export function useSmartImport() {
   const [job, setJob] = useState<ImportJob | null>(null);
@@ -21,6 +21,15 @@ export function useSmartImport() {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
+    }
+  }, []);
+
+  const refetchOnce = useCallback(async (jobId: string) => {
+    try {
+      const fresh = await getImportProgressApi(jobId);
+      setJob(fresh);
+    } catch {
+      // ignore
     }
   }, []);
 
@@ -53,7 +62,6 @@ export function useSmartImport() {
       setJob(null);
       try {
         const { jobId } = await startSmartImportApi(dirPath);
-        // Immediately fetch the initial state
         const initial = await getImportProgressApi(jobId);
         setJob(initial);
         startPolling(jobId);
@@ -68,30 +76,43 @@ export function useSmartImport() {
 
   const pauseImport = useCallback(async () => {
     if (!job) return;
+    const jobId = job.id;
+    setJob((prev) => (prev ? { ...prev, paused: true } : prev));
     try {
-      await pauseImportApi(job.id);
+      await pauseImportApi(jobId);
+      await refetchOnce(jobId);
     } catch (err) {
       console.error("Failed to pause:", err);
+      setJob((prev) => (prev ? { ...prev, paused: false } : prev));
     }
-  }, [job]);
+  }, [job, refetchOnce]);
 
   const resumeImport = useCallback(async () => {
     if (!job) return;
+    const jobId = job.id;
+    setJob((prev) => (prev ? { ...prev, paused: false } : prev));
     try {
-      await resumeImportApi(job.id);
+      await resumeImportApi(jobId);
+      await refetchOnce(jobId);
     } catch (err) {
       console.error("Failed to resume:", err);
+      setJob((prev) => (prev ? { ...prev, paused: true } : prev));
     }
-  }, [job]);
+  }, [job, refetchOnce]);
 
   const cancelImport = useCallback(async () => {
     if (!job) return;
+    const jobId = job.id;
+    setJob((prev) =>
+      prev ? { ...prev, cancelRequested: true, paused: false } : prev,
+    );
     try {
-      await cancelImportApi(job.id);
+      await cancelImportApi(jobId);
+      await refetchOnce(jobId);
     } catch (err) {
       console.error("Failed to cancel:", err);
     }
-  }, [job]);
+  }, [job, refetchOnce]);
 
   const dismiss = useCallback(() => {
     stopPolling();
@@ -99,7 +120,6 @@ export function useSmartImport() {
     setError(null);
   }, [stopPolling]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => stopPolling();
   }, [stopPolling]);

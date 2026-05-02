@@ -20,7 +20,6 @@ import {
   Clock,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import type { ImportJob, ImportFileStatus } from "@/features/smart-import";
 
@@ -66,7 +65,7 @@ function StatusLabel({ status }: { status: ImportFileStatus }) {
   };
   return (
     <span
-      className={`text-[10px] font-medium ${
+      className={`text-[10px] font-medium shrink-0 whitespace-nowrap ${
         status === "done"
           ? "text-emerald-400"
           : status === "review"
@@ -99,6 +98,9 @@ export function SmartImportWidget({
     ? !["completed", "error", "cancelled"].includes(job.status)
     : false;
 
+  // Optimistic flag: user just clicked Cancel, backend hasn't flipped status yet.
+  const isCancelling = !!job && job.cancelRequested && job.status !== "cancelled";
+
   const progress = useMemo(() => {
     if (!job || job.totalFiles === 0) return 0;
     return Math.round(
@@ -110,7 +112,8 @@ export function SmartImportWidget({
 
   const statusText = useMemo(() => {
     if (!job) return "";
-    if (job.paused) return t("smartImport.paused", "Paused");
+    if (isCancelling) return t("smartImport.cancelling", "Đang huỷ...");
+    if (job.paused) return t("smartImport.paused", "Tạm dừng");
     if (job.rateLimitInfo) return job.rateLimitInfo;
     switch (job.status) {
       case "scanning":
@@ -122,13 +125,13 @@ export function SmartImportWidget({
       case "completed":
         return t("smartImport.completed", "Import completed!");
       case "cancelled":
-        return t("smartImport.cancelled", "Import cancelled");
+        return t("smartImport.cancelled", "Đã huỷ nhập");
       case "error":
         return t("smartImport.errorStatus", "Import failed");
       default:
         return "";
     }
-  }, [job, t]);
+  }, [job, isCancelling, t]);
 
   if (!job) return null;
 
@@ -147,22 +150,27 @@ export function SmartImportWidget({
         >
           <div className="relative">
             <FolderOpen className="size-4 text-primary" />
-            {isRunning && !job.paused && (
+            {isCancelling && (
+              <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-red-400 animate-pulse" />
+            )}
+            {!isCancelling && isRunning && !job.paused && (
               <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-blue-400 animate-pulse" />
             )}
-            {job.paused && (
+            {!isCancelling && job.paused && (
               <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-amber-400" />
             )}
           </div>
           <div className="flex flex-col items-start">
             <span className="text-xs font-medium text-foreground">
               {job.status === "completed"
-                ? t("smartImport.completedShort", "Done")
+                ? t("smartImport.completedShort", "Xong")
                 : job.status === "cancelled"
-                  ? t("smartImport.cancelledShort", "Cancelled")
-                  : job.paused
-                    ? t("smartImport.pausedShort", "Paused")
-                    : `${job.completed + job.skipped}/${job.totalFiles}`}
+                  ? t("smartImport.cancelledShort", "Đã huỷ")
+                  : isCancelling
+                    ? t("smartImport.cancellingShort", "Đang huỷ...")
+                    : job.paused
+                      ? t("smartImport.pausedShort", "Tạm dừng")
+                      : `${job.completed + job.skipped}/${job.totalFiles}`}
             </span>
             <Progress value={progress} className="w-28 h-1 mt-0.5" />
           </div>
@@ -180,29 +188,36 @@ export function SmartImportWidget({
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 40, scale: 0.95 }}
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
-        className="fixed bottom-4 right-4 z-50 w-[360px] rounded-2xl bg-card/95 backdrop-blur-xl border border-border/50 shadow-2xl overflow-hidden"
+        className="fixed bottom-4 right-4 z-50 w-[360px] max-h-[calc(100vh-2rem)] flex flex-col rounded-2xl bg-card/95 backdrop-blur-xl border border-border/50 shadow-2xl overflow-hidden"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border/30 bg-muted/20">
+        <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-border/30 bg-muted/20">
           <div className="flex items-center gap-2">
             <FolderOpen className="size-4 text-primary" />
             <span className="text-sm font-semibold text-foreground">
               {t("smartImport.title", "Smart Import")}
             </span>
-            {isRunning && !job.paused && (
+            {isCancelling && (
+              <Loader2 className="size-3 animate-spin text-red-400" />
+            )}
+            {!isCancelling && isRunning && !job.paused && (
               <Loader2 className="size-3 animate-spin text-muted-foreground" />
             )}
-            {job.paused && (
+            {!isCancelling && job.paused && (
               <Clock className="size-3 text-amber-400" />
             )}
           </div>
           <div className="flex items-center gap-0.5">
-            {/* Pause/Resume button */}
-            {isRunning && onPause && onResume && (
+            {/* Pause/Resume button — hide while cancellation is in flight */}
+            {isRunning && !isCancelling && onPause && onResume && (
               <button
                 onClick={job.paused ? onResume : onPause}
                 className="size-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors"
-                title={job.paused ? "Resume" : "Pause"}
+                title={
+                  job.paused
+                    ? t("smartImport.resume", "Tiếp tục")
+                    : t("smartImport.pauseAction", "Tạm dừng")
+                }
               >
                 {job.paused ? (
                   <Play className="size-3.5 text-emerald-400" />
@@ -211,12 +226,13 @@ export function SmartImportWidget({
                 )}
               </button>
             )}
-            {/* Cancel button */}
+            {/* Cancel button — disabled (kept visible) while cancellation is in flight */}
             {isRunning && onCancel && (
               <button
                 onClick={onCancel}
-                className="size-7 flex items-center justify-center rounded-lg hover:bg-red-500/10 transition-colors"
-                title="Cancel"
+                disabled={isCancelling}
+                className="size-7 flex items-center justify-center rounded-lg hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title={t("smartImport.cancelAction", "Huỷ")}
               >
                 <Square className="size-3 text-red-400" />
               </button>
@@ -241,9 +257,19 @@ export function SmartImportWidget({
         </div>
 
         {/* Progress section */}
-        <div className="px-4 py-3 border-b border-border/20">
+        <div className="shrink-0 px-4 py-3 border-b border-border/20">
           <div className="flex items-center justify-between mb-1.5">
-            <span className={`text-xs ${job.paused ? "text-amber-400" : job.rateLimitInfo ? "text-orange-400" : "text-muted-foreground"}`}>
+            <span
+              className={`text-xs ${
+                isCancelling
+                  ? "text-red-400"
+                  : job.paused
+                    ? "text-amber-400"
+                    : job.rateLimitInfo
+                      ? "text-orange-400"
+                      : "text-muted-foreground"
+              }`}
+            >
               {statusText}
             </span>
             <span className="text-xs font-semibold text-foreground">
@@ -291,42 +317,66 @@ export function SmartImportWidget({
         </div>
 
         {/* File list */}
-        <ScrollArea className="max-h-[280px]">
-          <div className="px-2 py-1.5">
-            {job.files.map((file, idx) => (
-              <motion.div
-                key={`${file.name}-${idx}`}
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: Math.min(idx * 0.02, 0.5) }}
-                className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-muted/30 transition-colors group"
-              >
-                <FileStatusIcon status={file.status} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-foreground truncate">
-                    {file.name}
-                  </p>
-                  {file.folderName && (file.status === "done" || file.status === "review") && (
-                    <p className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                      <FolderOpen className="size-2.5" />
-                      {file.folderName}
-                    </p>
+        <div className="flex-1 min-h-0 max-h-[280px] overflow-y-auto px-2 py-1.5 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border">
+          {job.files.map((file, idx) => {
+              // While paused / cancelling, override display for files still in-flight
+              // (scanning/categorizing) so user gets immediate visual feedback even
+              // before backend can checkpoint between batches.
+              const isInFlight =
+                file.status === "scanning" || file.status === "categorizing";
+              const showPaused = job.paused && isInFlight;
+              const showCancelling = isCancelling && isInFlight;
+
+              return (
+                <motion.div
+                  key={`${file.name}-${idx}`}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: Math.min(idx * 0.02, 0.5) }}
+                  className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-muted/30 transition-colors group"
+                >
+                  {showPaused ? (
+                    <Pause className="size-3.5 text-amber-400" />
+                  ) : showCancelling ? (
+                    <Loader2 className="size-3.5 text-red-400 animate-spin" />
+                  ) : (
+                    <FileStatusIcon status={file.status} />
                   )}
-                  {file.reason && (file.status === "skipped" || file.status === "error" || file.status === "review") && (
-                    <p className={`text-[10px] mt-0.5 truncate ${file.status === "review" ? "text-orange-400/80" : "text-amber-400/80"}`}>
-                      {file.reason}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-foreground truncate">
+                      {file.name}
                     </p>
+                    {file.folderName && (file.status === "done" || file.status === "review") && (
+                      <p className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
+                        <FolderOpen className="size-2.5" />
+                        {file.folderName}
+                      </p>
+                    )}
+                    {file.reason && (file.status === "skipped" || file.status === "error" || file.status === "review") && (
+                      <p className={`text-[10px] mt-0.5 truncate ${file.status === "review" ? "text-orange-400/80" : "text-amber-400/80"}`}>
+                        {file.reason}
+                      </p>
+                    )}
+                  </div>
+                  {showPaused ? (
+                    <span className="text-[10px] font-medium text-amber-400 shrink-0 whitespace-nowrap">
+                      {t("smartImport.statusPausedFile", "Tạm dừng")}
+                    </span>
+                  ) : showCancelling ? (
+                    <span className="text-[10px] font-medium text-red-400 shrink-0 whitespace-nowrap">
+                      {t("smartImport.statusCancelling", "Đang huỷ...")}
+                    </span>
+                  ) : (
+                    <StatusLabel status={file.status} />
                   )}
-                </div>
-                <StatusLabel status={file.status} />
-              </motion.div>
-            ))}
-          </div>
-        </ScrollArea>
+                </motion.div>
+              );
+            })}
+        </div>
 
         {/* Footer */}
         {!isRunning && (
-          <div className="px-4 py-2.5 border-t border-border/20 bg-muted/10">
+          <div className="shrink-0 px-4 py-2.5 border-t border-border/20 bg-muted/10">
             <Button
               variant="outline"
               size="sm"

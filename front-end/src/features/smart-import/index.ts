@@ -1,4 +1,5 @@
 export { useSmartImport } from "./hooks";
+export { SmartImportProvider, useSmartImportContext } from "./context";
 export {
   scanFolderApi,
   startSmartImportApi,
