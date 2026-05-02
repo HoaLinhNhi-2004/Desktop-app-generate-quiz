@@ -293,6 +293,7 @@ export function HomePage() {
                         onKeyDown={(e) => {
                           if (e.key === "Enter") handleStartImport();
                         }}
+                        // eslint-disable-next-line jsx-a11y/no-autofocus -- intentional focus inside Radix Dialog
                         autoFocus
                         className="flex-1"
                       />
@@ -355,6 +356,7 @@ export function HomePage() {
                     value={folderName}
                     onChange={(e) => setFolderName(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+                    // eslint-disable-next-line jsx-a11y/no-autofocus -- intentional focus inside Radix Dialog
                     autoFocus
                   />
                 </div>
@@ -669,6 +671,7 @@ export function HomePage() {
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleUpdate()}
+                // eslint-disable-next-line jsx-a11y/no-autofocus -- intentional focus inside Radix Dialog
                 autoFocus
               />
             </div>
