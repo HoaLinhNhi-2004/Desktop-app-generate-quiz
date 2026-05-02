@@ -28,6 +28,7 @@ from werkzeug.utils import secure_filename
 from app.db import db
 from app.features.quizz.models import QuizSet, Question
 from app.features.upload.models import UploadedFileRecord
+from app.utils.errors import internal_error
 
 logger = logging.getLogger(__name__)
 
@@ -1011,11 +1012,12 @@ def generate_quiz():
         })
 
     except RuntimeError as e:
+        # Quiz generator raises RuntimeError with intentionally user-facing
+        # messages (quota exceeded, no API key, etc.) — safe to forward.
         logger.error(f"Quiz generation failed: {e}")
         return jsonify({"error": str(e)}), 500
     except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+        return internal_error(e, log_label="quiz.generate")
     finally:
         # Only delete files that were NOT persisted for reuse
         for path in saved_paths:
@@ -1072,8 +1074,7 @@ def extract_text():
             "filesProcessed": files_processed,
         })
     except Exception as e:
-        logger.error(f"Text extraction failed: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return internal_error(e, log_label="quiz.extract_text")
     finally:
         for path in saved_paths:
             try:

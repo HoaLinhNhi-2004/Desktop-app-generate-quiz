@@ -21,6 +21,7 @@ from app.features.folder.smart_import_service import (
     resume_job,
     cancel_job,
 )
+from app.utils.errors import internal_error
 
 smart_import_bp = Blueprint("smart_import", __name__)
 
@@ -55,7 +56,7 @@ def scan_folder():
             ],
         }), 200
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return internal_error(e, log_label="smart_import.scan")
 
 
 @smart_import_bp.route("/smart-import", methods=["POST"])
@@ -79,7 +80,7 @@ def start_import():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return internal_error(e, log_label="smart_import.start")
 
 
 @smart_import_bp.route("/smart-import/<job_id>", methods=["GET"])

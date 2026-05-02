@@ -7,8 +7,10 @@ from app.features.folder.folder_service import (
     toggle_favorite,
     record_access,
 )
+from app.utils.errors import internal_error
 
 folder_bp = Blueprint("folder", __name__)
+
 
 @folder_bp.route("/", methods=["GET"])
 def get_folders():
@@ -17,40 +19,40 @@ def get_folders():
         folders = get_all_folders()
         return jsonify(folders), 200
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return internal_error(e, log_label="get_folders")
+
 
 @folder_bp.route("/", methods=["POST"])
 def add_folder():
     """Create a new folder."""
+    data = request.json
+    if not data or not data.get("name"):
+        return jsonify({"error": "Folder name is required"}), 400
     try:
-        data = request.json
-        if not data or not data.get("name"):
-            return jsonify({"error": "Folder name is required"}), 400
-        
-        name = data.get("name")
-        description = data.get("description", "")
-        color = data.get("color", "")
-        
-        folder = create_folder(name, description, color)
+        folder = create_folder(
+            data.get("name"),
+            data.get("description", ""),
+            data.get("color", ""),
+        )
         return jsonify(folder), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return internal_error(e, log_label="add_folder")
+
 
 @folder_bp.route("/<folder_id>", methods=["PUT"])
 def edit_folder(folder_id):
     """Update an existing folder."""
+    data = request.json
+    if not data:
+        return jsonify({"error": "No update data provided"}), 400
     try:
-        data = request.json
-        if not data:
-            return jsonify({"error": "No update data provided"}), 400
-            
         updated_folder = update_folder(folder_id, data)
         if not updated_folder:
             return jsonify({"error": "Folder not found"}), 404
-            
         return jsonify(updated_folder), 200
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return internal_error(e, log_label="edit_folder")
+
 
 @folder_bp.route("/<folder_id>", methods=["DELETE"])
 def remove_folder(folder_id):
@@ -59,10 +61,9 @@ def remove_folder(folder_id):
         success = delete_folder(folder_id)
         if not success:
             return jsonify({"error": "Folder not found"}), 404
-            
         return jsonify({"message": "Folder deleted successfully"}), 200
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return internal_error(e, log_label="remove_folder")
 
 
 @folder_bp.route("/<folder_id>/favorite", methods=["PATCH"])
@@ -74,7 +75,7 @@ def patch_favorite(folder_id):
             return jsonify({"error": "Folder not found"}), 404
         return jsonify(folder), 200
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return internal_error(e, log_label="patch_favorite")
 
 
 @folder_bp.route("/<folder_id>/access", methods=["POST"])
@@ -86,4 +87,4 @@ def post_access(folder_id):
             return jsonify({"error": "Folder not found"}), 404
         return jsonify(folder), 200
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return internal_error(e, log_label="post_access")
