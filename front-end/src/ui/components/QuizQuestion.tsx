@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, Volume2, VolumeX } from "lucide-react";
 import type { QuizQuestion as QuizQuestionType } from "@/features/quizz";
 
 interface QuizQuestionProps {
@@ -15,6 +15,8 @@ interface QuizQuestionProps {
   onAnswerChange: (questionId: string, answerId: string) => void;
   showResult?: boolean;
   className?: string;
+  onToggleRead?: (q: QuizQuestionType) => void;
+  isReading?: boolean;
 }
 
 export function QuizQuestion({
@@ -23,6 +25,8 @@ export function QuizQuestion({
   onAnswerChange,
   showResult = false,
   className,
+  onToggleRead,
+  isReading = false,
 }: QuizQuestionProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
@@ -174,19 +178,53 @@ export function QuizQuestion({
             </span>
             {getTypeBadge()}
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
-            onClick={handleCopy}
-            title={t("quizQuestion.copyQuestion")}
-          >
-            {copied ? (
-              <Check className="size-3.5 text-green-500" />
-            ) : (
-              <Copy className="size-3.5" />
+          <div className="flex items-center gap-1">
+            {onToggleRead && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={() => onToggleRead(question)}
+                title={
+                  isReading
+                    ? t("a11y.tts.stop")
+                    : t("a11y.tts.readQuestion")
+                }
+                aria-label={
+                  isReading
+                    ? t("a11y.tts.stop")
+                    : t("a11y.tts.readQuestion")
+                }
+                aria-pressed={isReading}
+              >
+                {isReading ? (
+                  <VolumeX
+                    className="size-3.5 text-primary"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <Volume2 className="size-3.5" aria-hidden="true" />
+                )}
+              </Button>
             )}
-          </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
+              onClick={handleCopy}
+              title={t("quizQuestion.copyQuestion")}
+              aria-label={t("quizQuestion.copyQuestion")}
+            >
+              {copied ? (
+                <Check
+                  className="size-3.5 text-green-500"
+                  aria-hidden="true"
+                />
+              ) : (
+                <Copy className="size-3.5" aria-hidden="true" />
+              )}
+            </Button>
+          </div>
         </div>
         <p className="text-base font-medium leading-relaxed">
           {question.questionText}
@@ -210,7 +248,11 @@ export function QuizQuestion({
           )}
         />
       ) : question.type === "multiple-answer" ? (
-        <div className="space-y-2">
+        <div
+          className="space-y-2"
+          role="group"
+          aria-label={t("quizQuestion.typeMultipleAnswer")}
+        >
           {showResult && (
             <p className="text-xs text-muted-foreground mb-1">
               {t("quizQuestion.selectAllCorrect")}
@@ -219,18 +261,27 @@ export function QuizQuestion({
           {question.options.map((option, index) => {
             const isSelected = selectedIds.has(option.id);
             const isCorrectOpt = correctIds.has(option.id);
+            const letter = String.fromCharCode(65 + index);
             return (
-              <Label
+              <button
                 key={option.id}
+                type="button"
+                role="checkbox"
+                aria-checked={isSelected}
+                aria-label={`${letter}: ${option.text}`}
+                disabled={showResult}
                 className={cn(
-                  "flex cursor-pointer items-center gap-3 rounded-lg border p-3.5 transition-all",
-                  showResult ? "cursor-default" : "",
+                  "flex w-full items-center gap-3 rounded-lg border p-3.5 text-left transition-all",
+                  showResult
+                    ? "cursor-default disabled:opacity-100"
+                    : "cursor-pointer",
                   getOptionStyle(option.id),
                 )}
                 onClick={() => handleMultiToggle(option.id)}
               >
                 {/* Custom checkbox indicator */}
-                <div
+                <span
+                  aria-hidden="true"
                   className={cn(
                     "flex size-4 shrink-0 items-center justify-center rounded border-2 transition-colors",
                     isSelected && !showResult
@@ -245,9 +296,12 @@ export function QuizQuestion({
                   {(isSelected || (showResult && isCorrectOpt)) && (
                     <Check className="size-3 text-white" />
                   )}
-                </div>
-                <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold">
-                  {String.fromCharCode(65 + index)}
+                </span>
+                <span
+                  aria-hidden="true"
+                  className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold"
+                >
+                  {letter}
                 </span>
                 <span className="flex-1 text-sm">{option.text}</span>
                 {showResult && isCorrectOpt && (
@@ -263,7 +317,7 @@ export function QuizQuestion({
                     {t("quizQuestion.wrongLabel")}
                   </Badge>
                 )}
-              </Label>
+              </button>
             );
           })}
         </div>

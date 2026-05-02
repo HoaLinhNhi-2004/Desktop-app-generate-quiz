@@ -65,7 +65,10 @@ import {
   Cpu,
   Gauge,
   History,
+  Accessibility,
 } from "lucide-react";
+import { useA11y } from "@/config/a11y-provider";
+import type { SpeechRate } from "@/lib/use-speech";
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
@@ -669,6 +672,7 @@ function KeyCard({
                       if (e.key === "Enter") handleSaveLabel();
                       if (e.key === "Escape") setEditing(false);
                     }}
+                    // eslint-disable-next-line jsx-a11y/no-autofocus -- intentional focus on inline edit toggle
                     autoFocus
                   />
                   <Button
@@ -1015,6 +1019,104 @@ function PoolHistoryCard() {
 
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
+function AccessibilityCard() {
+  const { t } = useTranslation();
+  const {
+    ttsEnabled,
+    setTtsEnabled,
+    ttsRate,
+    setTtsRate,
+    highContrast,
+    setHighContrast,
+  } = useA11y();
+  const rates: SpeechRate[] = ["slow", "normal", "fast"];
+
+  return (
+    <Card className="border-border/50 bg-card/50">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <Accessibility className="size-5 text-primary" aria-hidden="true" />
+          <CardTitle className="text-base font-semibold">
+            {t("a11y.settings.sectionTitle")}
+          </CardTitle>
+        </div>
+        <CardDescription>
+          {t("a11y.settings.sectionDescription")}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-0.5">
+            <Label htmlFor="a11y-contrast" className="text-sm font-medium">
+              {t("a11y.settings.highContrast")}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t("a11y.settings.highContrastDescription")}
+            </p>
+          </div>
+          <Switch
+            id="a11y-contrast"
+            checked={highContrast}
+            onCheckedChange={setHighContrast}
+          />
+        </div>
+
+        <Separator />
+
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-0.5">
+            <Label htmlFor="a11y-tts" className="text-sm font-medium">
+              {t("a11y.settings.tts")}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t("a11y.settings.ttsDescription")}
+            </p>
+          </div>
+          <Switch
+            id="a11y-tts"
+            checked={ttsEnabled}
+            onCheckedChange={setTtsEnabled}
+          />
+        </div>
+
+        {ttsEnabled && (
+          <div className="space-y-2">
+            <span
+              id="a11y-tts-rate-label"
+              className="text-sm font-medium block"
+            >
+              {t("a11y.settings.ttsRate")}
+            </span>
+            <div
+              role="radiogroup"
+              aria-labelledby="a11y-tts-rate-label"
+              className="inline-flex rounded-md border border-border p-0.5"
+            >
+              {rates.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  role="radio"
+                  aria-checked={ttsRate === r}
+                  onClick={() => setTtsRate(r)}
+                  className={cn(
+                    "rounded-sm px-3 py-1 text-xs font-medium transition-colors",
+                    ttsRate === r
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted/50",
+                  )}
+                >
+                  {t(`a11y.settings.ttsRateOptions.${r}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function SettingsContent() {
   const { t } = useTranslation();
   const {
@@ -1170,6 +1272,11 @@ export function SettingsContent() {
 
         {/* Pool history */}
         <PoolHistoryCard />
+
+        <Separator />
+
+        {/* Accessibility settings */}
+        <AccessibilityCard />
 
         <Separator />
 

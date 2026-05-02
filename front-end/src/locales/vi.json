@@ -742,5 +742,39 @@
       "failed": "Nhập thư mục thất bại",
       "cancelled": "Đã huỷ nhập thư mục"
     }
+  },
+  "a11y": {
+    "tts": {
+      "readQuestion": "Đọc câu hỏi",
+      "stop": "Dừng đọc",
+      "notSupported": "Trình duyệt không hỗ trợ đọc giọng nói",
+      "optionLetter": "Đáp án {{letter}}: {{text}}",
+      "questionPrefix": "Câu hỏi {{n}}.",
+      "correctIs": "Đáp án đúng là {{text}}",
+      "explanationLabel": "Giải thích."
+    },
+    "live": {
+      "progress": "Đã trả lời {{answered}} trên {{total}} câu",
+      "scoreAnnounce": "Bạn đạt {{score}}%, đúng {{correct}} trên {{total}} câu",
+      "answeredCorrect": "Câu {{n}} đúng",
+      "answeredWrong": "Câu {{n}} sai"
+    },
+    "settings": {
+      "sectionTitle": "Hỗ trợ tiếp cận (Accessibility)",
+      "sectionDescription": "Tuỳ chọn dành cho người khiếm thị, khiếm thính hoặc cần hỗ trợ đọc.",
+      "highContrast": "Tương phản cao",
+      "highContrastDescription": "Tăng độ tương phản giữa nền và chữ — phù hợp người khiếm thị nhẹ",
+      "tts": "Bật đọc câu hỏi (TTS)",
+      "ttsDescription": "Hiển thị nút đọc câu hỏi và phím tắt R trong quiz",
+      "ttsRate": "Tốc độ đọc",
+      "ttsRateOptions": {
+        "slow": "Chậm",
+        "normal": "Bình thường",
+        "fast": "Nhanh"
+      }
+    },
+    "shortcuts": {
+      "readQuestion": "Đọc câu hỏi"
+    }
   }
 }

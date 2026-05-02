@@ -742,5 +742,39 @@
       "failed": "Folder import failed",
       "cancelled": "Folder import cancelled"
     }
+  },
+  "a11y": {
+    "tts": {
+      "readQuestion": "Read question aloud",
+      "stop": "Stop reading",
+      "notSupported": "Your browser does not support speech synthesis",
+      "optionLetter": "Option {{letter}}: {{text}}",
+      "questionPrefix": "Question {{n}}.",
+      "correctIs": "Correct answer is {{text}}",
+      "explanationLabel": "Explanation."
+    },
+    "live": {
+      "progress": "{{answered}} of {{total}} questions answered",
+      "scoreAnnounce": "You scored {{score}}%, {{correct}} out of {{total}} correct",
+      "answeredCorrect": "Question {{n}} correct",
+      "answeredWrong": "Question {{n}} wrong"
+    },
+    "settings": {
+      "sectionTitle": "Accessibility",
+      "sectionDescription": "Options for users with visual or hearing impairments.",
+      "highContrast": "High contrast",
+      "highContrastDescription": "Boosts contrast between background and text — easier to read for low-vision users",
+      "tts": "Enable read-aloud (TTS)",
+      "ttsDescription": "Show a read button on every question and the R keyboard shortcut",
+      "ttsRate": "Reading speed",
+      "ttsRateOptions": {
+        "slow": "Slow",
+        "normal": "Normal",
+        "fast": "Fast"
+      }
+    },
+    "shortcuts": {
+      "readQuestion": "Read question"
+    }
   }
 }

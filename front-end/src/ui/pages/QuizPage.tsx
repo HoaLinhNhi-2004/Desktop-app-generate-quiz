@@ -3,6 +3,9 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import confetti from "canvas-confetti";
 import { cn } from "@/lib/utils";
+import { useSpeech } from "@/lib/use-speech";
+import { buildQuestionSpeech } from "@/lib/quiz-speech";
+import { useA11y } from "@/config/a11y-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -50,7 +53,12 @@ import { useSaveAttempt } from "@/features/stats";
 export function QuizPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const { ttsEnabled, ttsRate } = useA11y();
+  const speech = useSpeech({
+    rate: ttsRate,
+    lang: i18n.language === "en" ? "en-US" : "vi-VN",
+  });
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -113,6 +121,19 @@ export function QuizPage() {
       setAnswers((prev) => ({ ...prev, [questionId]: answerId }));
     },
     [isSubmitted],
+  );
+
+  const handleToggleRead = useCallback(
+    (q: QuizQuestionType) => {
+      if (!ttsEnabled || !speech.supported) return;
+      if (speech.speakingId === q.id) {
+        speech.stop();
+        return;
+      }
+      const text = buildQuestionSpeech(q, t, isSubmitted);
+      speech.speak(text, q.id);
+    },
+    [ttsEnabled, speech, t, isSubmitted],
   );
 
   const answeredCount = Object.keys(answers).length;
@@ -275,8 +296,6 @@ export function QuizPage() {
 
   // Keyboard shortcuts
   useEffect(() => {
-    if (isSubmitted) return;
-
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't intercept when user is typing
       if (
@@ -286,6 +305,17 @@ export function QuizPage() {
         return;
       // Don't intercept modifier combos
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      // R key: toggle read-aloud (works in both quiz + result modes)
+      if (e.key === "r" || e.key === "R") {
+        if (!ttsEnabled || !speech.supported || !currentQuestion) return;
+        e.preventDefault();
+        handleToggleRead(currentQuestion);
+        return;
+      }
+
+      // The remaining shortcuts only apply while the quiz is active
+      if (isSubmitted) return;
 
       switch (e.key) {
         case "ArrowLeft":
@@ -350,6 +380,9 @@ export function QuizPage() {
     handleAnswerChange,
     handleSubmit,
     answers,
+    ttsEnabled,
+    speech.supported,
+    handleToggleRead,
   ]);
 
   // Don't render if no questions (will redirect via useEffect)
@@ -405,6 +438,7 @@ export function QuizPage() {
                             f.type === "application/pdf" ? (
                               <iframe
                                 src={`${f.preview}#toolbar=0`}
+                                title={f.name}
                                 className="w-full h-[65vh] border rounded-lg bg-muted/30"
                               />
                             ) : f.type.includes("wordprocessingml") ||
@@ -475,11 +509,17 @@ export function QuizPage() {
             <Badge
               variant="outline"
               className="gap-1.5 px-3 py-1 hidden lg:flex"
+              aria-hidden="true"
             >
-              <Clock className="size-3.5" />
+              <Clock className="size-3.5" aria-hidden="true" />
               {formatTime(elapsed)}
             </Badge>
-            <Badge variant="secondary" className="px-3 py-1">
+            <Badge
+              variant="secondary"
+              className="px-3 py-1"
+              role="status"
+              aria-live="polite"
+            >
               {answeredCount}/{questions.length} {t("quiz.answered")}
             </Badge>
           </div>
@@ -508,6 +548,12 @@ export function QuizPage() {
                           selectedAnswer={answers[q.id]}
                           onAnswerChange={handleAnswerChange}
                           showResult
+                          onToggleRead={
+                            ttsEnabled && speech.supported
+                              ? handleToggleRead
+                              : undefined
+                          }
+                          isReading={speech.speakingId === q.id}
                         />
                         {q.id !== questions[questions.length - 1].id && (
                           <Separator className="mt-6" />
@@ -521,6 +567,12 @@ export function QuizPage() {
                     question={currentQuestion}
                     selectedAnswer={answers[currentQuestion.id]}
                     onAnswerChange={handleAnswerChange}
+                    onToggleRead={
+                      ttsEnabled && speech.supported
+                        ? handleToggleRead
+                        : undefined
+                    }
+                    isReading={speech.speakingId === currentQuestion.id}
                   />
                 )}
               </div>
@@ -582,6 +634,14 @@ export function QuizPage() {
               {t("quiz.shortcuts.selectAnswer")} &nbsp;·&nbsp;
               <kbd className="font-mono">Enter</kbd>{" "}
               {t("quiz.shortcuts.nextOrSubmit")}
+              {ttsEnabled && speech.supported && (
+                <>
+                  {" "}
+                  &nbsp;·&nbsp;
+                  <kbd className="font-mono">R</kbd>{" "}
+                  {t("a11y.shortcuts.readQuestion")}
+                </>
+              )}
             </p>
           </div>
         )}
@@ -591,7 +651,11 @@ export function QuizPage() {
       <div className="flex min-h-0 w-72 shrink-0 flex-col space-y-4 overflow-y-auto">
         {isSubmitted && result ? (
           // Result panel
-          <Card className="overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <Card
+            className="overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500"
+            role="region"
+            aria-label={t("quiz.results.correct")}
+          >
             <div
               className={cn(
                 "px-6 pt-6 pb-5 text-center",
@@ -709,11 +773,23 @@ export function QuizPage() {
               </div>
 
               <div className="flex items-center justify-center gap-2 py-2.5 rounded-lg bg-muted/50">
-                <Clock className="size-4 text-muted-foreground" />
+                <Clock
+                  className="size-4 text-muted-foreground"
+                  aria-hidden="true"
+                />
                 <span className="text-sm font-medium">
                   {formatTime(result.timeTaken)}
                 </span>
               </div>
+
+              {/* Screen-reader announcer for final score */}
+              <span className="sr-only" role="status" aria-live="polite">
+                {t("a11y.live.scoreAnnounce", {
+                  score: Math.round(result.score),
+                  correct: result.correctAnswers,
+                  total: result.totalQuestions,
+                })}
+              </span>
 
               <Separator />
 
@@ -749,7 +825,15 @@ export function QuizPage() {
                         {questions.map((q, i) => (
                           <button
                             key={q.id}
+                            type="button"
                             onClick={() => setCurrentIndex(i)}
+                            aria-current={
+                              i === currentIndex ? "true" : undefined
+                            }
+                            aria-label={t("quiz.questionOf", {
+                              current: i + 1,
+                              total: questions.length,
+                            })}
                             className={cn(
                               "flex size-10 items-center justify-center rounded-md text-sm font-medium transition-all",
                               i === currentIndex

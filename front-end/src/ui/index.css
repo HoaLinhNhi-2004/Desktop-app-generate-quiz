@@ -124,6 +124,35 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* ── High-contrast mode (accessibility) ── */
+/* Boost contrast on text, borders, and muted tokens to help low-vision users */
+.high-contrast {
+  --foreground: oklch(0 0 0);
+  --background: oklch(1 0 0);
+  --muted-foreground: oklch(0.25 0 0);
+  --border: oklch(0.45 0 0);
+  --input: oklch(0.45 0 0);
+  --ring: oklch(0.25 0 0);
+  --card-foreground: oklch(0 0 0);
+  --popover-foreground: oklch(0 0 0);
+}
+
+.dark.high-contrast {
+  --foreground: oklch(1 0 0);
+  --background: oklch(0 0 0);
+  --muted-foreground: oklch(0.92 0 0);
+  --border: oklch(1 0 0 / 60%);
+  --input: oklch(1 0 0 / 60%);
+  --ring: oklch(0.92 0 0);
+  --card-foreground: oklch(1 0 0);
+  --popover-foreground: oklch(1 0 0);
+}
+
+.high-contrast :focus-visible {
+  outline: 3px solid var(--ring);
+  outline-offset: 2px;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
