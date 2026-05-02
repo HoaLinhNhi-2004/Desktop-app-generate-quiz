@@ -37,7 +37,7 @@ export function FloatingToolbar() {
         onOpenChange={setSettingsOpen}
         direction="right"
       >
-        <DrawerContent className="h-full w-full sm:max-w-2xl">
+        <DrawerContent className="h-full w-full sm:max-w-3xl lg:max-w-5xl">
           <DrawerHeader>
             <DrawerTitle>{t("header.settingsTitle")}</DrawerTitle>
             <DrawerDescription>
