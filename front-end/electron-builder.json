@@ -2,7 +2,20 @@
   "appId": "com.hoanglong.generate-quiz",
   "productName": "Generate Quiz",
   "files": ["dist-electron", "dist-react"],
-  "extraResources": ["dist-electron/preload.cjs", "src/assets/**", "backend"],
+  "extraResources": [
+    {
+      "from": "backend",
+      "to": "backend",
+      "filter": ["**/*", "!**/__pycache__/**", "!**/*.pdb", "!**/*.pyc", "!**/*.pyo"]
+    },
+    "dist-electron/preload.cjs",
+    "src/assets/**"
+  ],
+  "compression": "maximum",
+  "asar": true,
+  "electronLanguages": ["en-US", "vi"],
+  "removePackageScripts": true,
+  "removePackageKeywords": true,
   "publish": {
     "provider": "github",
     "owner": "HoangLong08",

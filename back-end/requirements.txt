@@ -17,7 +17,6 @@ PyMuPDF  # text block bounding boxes for heatmap overlay
 # LLM
 requests
 google-generativeai  # optional: only if using Gemini provider
-google-genai
 
 # Vector database
 chromadb
