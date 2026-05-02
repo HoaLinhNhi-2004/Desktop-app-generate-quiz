@@ -452,8 +452,50 @@
       "description": "Usage details and limits for each Gemini model",
       "totalTokens": "Total tokens",
       "successRate": "Success rate",
-      "errorPrefix": "Error:"
+      "errorPrefix": "Error:",
+      "headers": {
+        "model": "Model",
+        "requests": "Requests",
+        "input": "Input",
+        "output": "Output",
+        "todayRpd": "Today / RPD"
+      }
     },
+    "history": {
+      "buttonLabel": "History",
+      "dialogTitle": "Usage history",
+      "dialogDescription": "Daily requests and tokens used (Pacific Time — Gemini's RPD reset boundary).",
+      "rangeLabel": "Time range",
+      "range7": "7 days",
+      "range30": "30 days",
+      "range90": "90 days",
+      "totalRequests": "Total requests",
+      "totalTokens": "Total tokens",
+      "noData": "No data in this range",
+      "loading": "Loading history..."
+    },
+    "status": {
+      "active": "Active",
+      "cooldown": "Cooldown",
+      "disabled": "Disabled"
+    },
+    "stats": {
+      "tokens": "tokens",
+      "requests": "requests",
+      "errors": "errors",
+      "input": "Input",
+      "output": "Output"
+    },
+    "breakdown": {
+      "req": "req",
+      "in": "in",
+      "out": "out"
+    },
+    "keysHeading": "API Keys",
+    "cooldownBadge": "{{count}} cooldown",
+    "refreshButton": "Refresh",
+    "toggleAriaLabel": "Toggle key",
+    "apiKeyLabel": "API Key *",
     "keyCard": {
       "save": "Save",
       "noLabel": "No label"
@@ -476,6 +518,9 @@
     },
     "deletedKey": "Key deleted",
     "updatedLabel": "Label updated",
+    "deleteError": "Failed to delete key",
+    "toggleError": "Failed to toggle key status",
+    "renameError": "Failed to update label",
     "freeTier": {
       "title": "Free Tier Limits (Gemini API)",
       "description": "Rate limit per API key, each model has separate quota",

@@ -2,8 +2,23 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "@/config/i18n";
 import { cn } from "@/lib/utils";
-import { useApiKeys } from "@/features/api-keys";
-import type { GeminiApiKey, ModelSummary } from "@/features/api-keys";
+import { useApiKeys, useKeyUsageHistory } from "@/features/api-keys";
+import type {
+  DailyUsageEntry,
+  GeminiApiKey,
+  ModelSummary,
+  ModelUsageStats,
+} from "@/features/api-keys";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Card,
@@ -45,6 +60,7 @@ import {
   Pencil,
   Cpu,
   Gauge,
+  History,
 } from "lucide-react";
 
 function formatNumber(n: number): string {
@@ -67,21 +83,21 @@ function timeAgo(isoDate: string | null): string {
 
 const statusConfig = {
   active: {
-    label: "Active",
+    labelKey: "settings.status.active",
     color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
     icon: CheckCircle2,
   },
   cooldown: {
-    label: "Cooldown",
+    labelKey: "settings.status.cooldown",
     color: "bg-amber-500/15 text-amber-400 border-amber-500/30",
     icon: Clock,
   },
   disabled: {
-    label: "Disabled",
+    labelKey: "settings.status.disabled",
     color: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
     icon: Ban,
   },
-};
+} as const;
 
 const modelColors: Record<string, string> = {
   "gemini-2.5-flash": "text-blue-400",
@@ -89,9 +105,9 @@ const modelColors: Record<string, string> = {
   "gemini-2.0-flash": "text-amber-400",
 };
 
-function KeyStatusBadge({ status }: { status: string }) {
-  const cfg =
-    statusConfig[status as keyof typeof statusConfig] || statusConfig.disabled;
+function KeyStatusBadge({ status }: { status: GeminiApiKey["status"] }) {
+  const { t } = useTranslation();
+  const cfg = statusConfig[status] || statusConfig.disabled;
   const Icon = cfg.icon;
   return (
     <Badge
@@ -99,7 +115,7 @@ function KeyStatusBadge({ status }: { status: string }) {
       className={cn("gap-1 text-xs font-medium", cfg.color)}
     >
       <Icon className="size-3" />
-      {cfg.label}
+      {t(cfg.labelKey)}
     </Badge>
   );
 }
@@ -150,7 +166,7 @@ function AddKeyDialog({
         </DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="grid gap-2">
-            <Label htmlFor="api-key">API Key *</Label>
+            <Label htmlFor="api-key">{t("settings.apiKeyLabel")}</Label>
             <Input
               id="api-key"
               type="password"
@@ -190,6 +206,48 @@ function AddKeyDialog({
   );
 }
 
+// ─── Today vs RPD cell ───────────────────────────────────────────────────────
+
+function TodayVsRpdCell({
+  requestsToday,
+  rpd,
+}: {
+  requestsToday: number;
+  rpd: number;
+}) {
+  if (rpd <= 0) {
+    return <span className="text-muted-foreground/50 text-xs">-</span>;
+  }
+  const pct = Math.min(100, Math.round((requestsToday / rpd) * 100));
+  const tone =
+    pct >= 90
+      ? "text-red-400"
+      : pct >= 70
+        ? "text-amber-400"
+        : "text-emerald-400";
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <span className={cn("text-xs font-mono font-semibold", tone)}>
+        {requestsToday}
+        <span className="text-muted-foreground"> / {rpd}</span>
+      </span>
+      <div className="h-1 w-16 overflow-hidden rounded-full bg-muted">
+        <div
+          className={cn(
+            "h-full transition-all",
+            pct >= 90
+              ? "bg-red-400"
+              : pct >= 70
+                ? "bg-amber-400"
+                : "bg-emerald-400",
+          )}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── Per-model usage table (global) ──────────────────────────────────────────
 
 function ModelUsageTable({ models }: { models: ModelSummary[] }) {
@@ -212,12 +270,23 @@ function ModelUsageTable({ models }: { models: ModelSummary[] }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border/50 text-left text-xs text-muted-foreground">
-                <th className="pb-2 pr-3 font-medium">Model</th>
-                <th className="pb-2 px-3 font-medium text-right">Requests</th>
-                <th className="pb-2 px-3 font-medium text-right">Input</th>
-                <th className="pb-2 px-3 font-medium text-right">Output</th>
+                <th className="pb-2 pr-3 font-medium">
+                  {t("settings.modelUsage.headers.model")}
+                </th>
+                <th className="pb-2 px-3 font-medium text-right">
+                  {t("settings.modelUsage.headers.requests")}
+                </th>
+                <th className="pb-2 px-3 font-medium text-right">
+                  {t("settings.modelUsage.headers.input")}
+                </th>
+                <th className="pb-2 px-3 font-medium text-right">
+                  {t("settings.modelUsage.headers.output")}
+                </th>
                 <th className="pb-2 px-3 font-medium text-right">
                   {t("settings.modelUsage.totalTokens")}
+                </th>
+                <th className="pb-2 px-3 font-medium text-right">
+                  {t("settings.modelUsage.headers.todayRpd")}
                 </th>
                 <th className="pb-2 px-3 font-medium text-right">RPD</th>
                 <th className="pb-2 px-3 font-medium text-right">RPM</th>
@@ -278,6 +347,12 @@ function ModelUsageTable({ models }: { models: ModelSummary[] }) {
                       )}
                     </td>
                     <td className="py-2.5 px-3 text-right">
+                      <TodayVsRpdCell
+                        requestsToday={m.requestsToday}
+                        rpd={m.limits?.rpd ?? 0}
+                      />
+                    </td>
+                    <td className="py-2.5 px-3 text-right">
                       {m.limits ? (
                         <span className="text-xs text-muted-foreground">
                           {m.limits.rpd}
@@ -329,16 +404,9 @@ function ModelUsageTable({ models }: { models: ModelSummary[] }) {
 function KeyModelBreakdown({
   modelUsage,
 }: {
-  modelUsage: Record<
-    string,
-    {
-      requests: number;
-      inputTokens: number;
-      outputTokens: number;
-      totalTokens: number;
-    }
-  >;
+  modelUsage: Record<string, ModelUsageStats>;
 }) {
+  const { t } = useTranslation();
   const entries = Object.entries(modelUsage).filter(([, s]) => s.requests > 0);
   if (entries.length === 0) return null;
 
@@ -352,14 +420,16 @@ function KeyModelBreakdown({
             <span className={cn("font-medium min-w-[100px]", color)}>
               {model}
             </span>
-            <span className="text-muted-foreground">{stats.requests} req</span>
+            <span className="text-muted-foreground">
+              {stats.requests} {t("settings.breakdown.req")}
+            </span>
             <span className="text-muted-foreground">·</span>
             <span className="text-blue-400">
-              {formatNumber(stats.inputTokens)} in
+              {formatNumber(stats.inputTokens)} {t("settings.breakdown.in")}
             </span>
             <span className="text-muted-foreground">·</span>
             <span className="text-violet-400">
-              {formatNumber(stats.outputTokens)} out
+              {formatNumber(stats.outputTokens)} {t("settings.breakdown.out")}
             </span>
             <span className="text-muted-foreground">·</span>
             <span className="font-semibold">
@@ -372,6 +442,158 @@ function KeyModelBreakdown({
   );
 }
 
+// ─── Key history dialog ──────────────────────────────────────────────────────
+
+type HistoryRange = 7 | 30 | 90;
+
+function aggregateByDate(
+  entries: DailyUsageEntry[],
+): { date: string; requests: number; totalTokens: number }[] {
+  const byDate = new Map<string, { requests: number; totalTokens: number }>();
+  for (const e of entries) {
+    const bucket = byDate.get(e.datePst) ?? { requests: 0, totalTokens: 0 };
+    bucket.requests += e.requests;
+    bucket.totalTokens += e.totalTokens;
+    byDate.set(e.datePst, bucket);
+  }
+  return Array.from(byDate.entries())
+    .map(([date, v]) => ({ date, ...v }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function KeyHistoryDialog({
+  apiKey,
+  open,
+  onOpenChange,
+}: {
+  apiKey: GeminiApiKey;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const [range, setRange] = useState<HistoryRange>(30);
+  const { data, isLoading } = useKeyUsageHistory(open ? apiKey.id : null, range);
+
+  const chartData = data ? aggregateByDate(data.entries) : [];
+  const totalRequests = chartData.reduce((s, d) => s + d.requests, 0);
+  const totalTokens = chartData.reduce((s, d) => s + d.totalTokens, 0);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{t("settings.history.dialogTitle")}</DialogTitle>
+          <DialogDescription>
+            {t("settings.history.dialogDescription")}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex items-center justify-between gap-2 pt-2">
+          <div className="text-xs text-muted-foreground">
+            {apiKey.label || t("settings.keyCard.noLabel")} ·{" "}
+            <span className="font-mono">{apiKey.key}</span>
+          </div>
+          <div className="flex gap-1">
+            {([7, 30, 90] as const).map((r) => (
+              <Button
+                key={r}
+                size="sm"
+                variant={range === r ? "default" : "outline"}
+                className="h-7 text-xs"
+                onClick={() => setRange(r)}
+              >
+                {t(`settings.history.range${r}`)}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 pt-2">
+          <div className="rounded-lg border border-border/50 bg-card/50 p-3">
+            <p className="text-[10px] text-muted-foreground">
+              {t("settings.history.totalRequests")}
+            </p>
+            <p className="text-xl font-semibold">{totalRequests}</p>
+          </div>
+          <div className="rounded-lg border border-border/50 bg-card/50 p-3">
+            <p className="text-[10px] text-muted-foreground">
+              {t("settings.history.totalTokens")}
+            </p>
+            <p className="text-xl font-semibold">
+              {formatNumber(totalTokens)}
+            </p>
+          </div>
+        </div>
+
+        <div className="h-64 pt-2">
+          {isLoading ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              <RefreshCw className="size-4 animate-spin mr-2" />
+              {t("settings.history.loading")}
+            </div>
+          ) : chartData.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              {t("settings.history.noData")}
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="hsl(var(--border))"
+                  opacity={0.15}
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 10, fill: "currentColor" }}
+                  className="text-muted-foreground"
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v: string) => v.slice(5)}
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fill: "currentColor" }}
+                  className="text-muted-foreground"
+                  axisLine={false}
+                  tickLine={false}
+                  width={32}
+                />
+                <RechartsTooltip
+                  contentStyle={{
+                    backgroundColor: "hsl(var(--card))",
+                    border: "1px solid hsl(var(--border))",
+                    borderRadius: 8,
+                    fontSize: 11,
+                    padding: "6px 10px",
+                    color: "hsl(var(--foreground))",
+                  }}
+                  cursor={{ fill: "hsl(var(--muted))", opacity: 0.1 }}
+                />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Bar
+                  dataKey="requests"
+                  fill="hsl(217 91% 60%)"
+                  name={t("settings.stats.requests")}
+                  radius={[3, 3, 0, 0]}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="ghost">
+              {t("settings.addKeyDialog.cancelButton")}
+            </Button>
+          </DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Key Card ────────────────────────────────────────────────────────────────
 
 function KeyCard({
@@ -381,34 +603,63 @@ function KeyCard({
   onRename,
 }: {
   apiKey: GeminiApiKey;
-  onToggle: () => void;
-  onDelete: () => void;
-  onRename: (label: string) => void;
+  onToggle: () => Promise<void>;
+  onDelete: () => Promise<void>;
+  onRename: (label: string) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [labelDraft, setLabelDraft] = useState(apiKey.label);
   const [deleting, setDeleting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [toggling, setToggling] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const totalTokens = apiKey.totalTokens;
   const successRate =
     apiKey.usageCount > 0
-      ? Math.round(
-          ((apiKey.usageCount - apiKey.errorCount) / apiKey.usageCount) * 100,
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            Math.round(
+              ((apiKey.usageCount - apiKey.errorCount) / apiKey.usageCount) *
+                100,
+            ),
+          ),
         )
       : 100;
 
-  function handleSaveLabel() {
-    onRename(labelDraft);
-    setEditing(false);
+  async function handleSaveLabel() {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await onRename(labelDraft);
+      setEditing(false);
+    } catch {
+      // Parent đã hiển thị toast.error; giữ edit mode để user retry
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleDelete() {
+    if (deleting) return;
     setDeleting(true);
     try {
-      onDelete();
+      await onDelete();
     } finally {
       setDeleting(false);
+    }
+  }
+
+  async function handleToggle() {
+    if (toggling) return;
+    setToggling(true);
+    try {
+      await onToggle();
+    } finally {
+      setToggling(false);
     }
   }
 
@@ -467,14 +718,14 @@ function KeyCard({
                 <strong className="text-foreground">
                   {formatNumber(totalTokens)}
                 </strong>{" "}
-                tokens
+                {t("settings.stats.tokens")}
               </span>
               <span className="flex items-center gap-1">
                 <Activity className="size-3 text-purple-400" />
                 <strong className="text-foreground">
                   {apiKey.usageCount}
                 </strong>{" "}
-                requests
+                {t("settings.stats.requests")}
               </span>
               {apiKey.errorCount > 0 && (
                 <span className="flex items-center gap-1">
@@ -482,7 +733,7 @@ function KeyCard({
                   <strong className="text-red-400">
                     {apiKey.errorCount}
                   </strong>{" "}
-                  errors
+                  {t("settings.stats.errors")}
                 </span>
               )}
               <span className="flex items-center gap-1">
@@ -495,8 +746,14 @@ function KeyCard({
             {totalTokens > 0 && (
               <div className="space-y-1">
                 <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>Input: {formatNumber(apiKey.totalInputTokens)}</span>
-                  <span>Output: {formatNumber(apiKey.totalOutputTokens)}</span>
+                  <span>
+                    {t("settings.stats.input")}:{" "}
+                    {formatNumber(apiKey.totalInputTokens)}
+                  </span>
+                  <span>
+                    {t("settings.stats.output")}:{" "}
+                    {formatNumber(apiKey.totalOutputTokens)}
+                  </span>
                 </div>
                 <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
                   <div
@@ -555,21 +812,38 @@ function KeyCard({
           <div className="flex flex-col items-end gap-2 shrink-0">
             <Switch
               checked={apiKey.status !== "disabled"}
-              onCheckedChange={onToggle}
-              aria-label="Toggle key"
+              onCheckedChange={handleToggle}
+              disabled={toggling}
+              aria-label={t("settings.toggleAriaLabel")}
             />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400"
-              onClick={handleDelete}
-              disabled={deleting}
-            >
-              <Trash2 className="size-3.5" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0 text-muted-foreground hover:text-primary"
+                onClick={() => setHistoryOpen(true)}
+                aria-label={t("settings.history.buttonLabel")}
+              >
+                <History className="size-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400"
+                onClick={handleDelete}
+                disabled={deleting}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </div>
           </div>
         </div>
       </CardContent>
+      <KeyHistoryDialog
+        apiKey={apiKey}
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+      />
     </Card>
   );
 }
@@ -673,14 +947,18 @@ export function SettingsContent() {
               <div className="flex items-center justify-between text-sm">
                 <div className="flex items-center gap-2">
                   <div className="size-2.5 rounded-full bg-blue-500" />
-                  <span className="text-muted-foreground">Input</span>
+                  <span className="text-muted-foreground">
+                    {t("settings.stats.input")}
+                  </span>
                   <span className="font-medium">
                     {formatNumber(summary.totalInputTokens)}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="size-2.5 rounded-full bg-violet-500" />
-                  <span className="text-muted-foreground">Output</span>
+                  <span className="text-muted-foreground">
+                    {t("settings.stats.output")}
+                  </span>
                   <span className="font-medium">
                     {formatNumber(summary.totalOutputTokens)}
                   </span>
@@ -708,13 +986,17 @@ export function SettingsContent() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Key className="size-5 text-primary" />
-              <h3 className="text-lg font-semibold">API Keys</h3>
+              <h3 className="text-lg font-semibold">
+                {t("settings.keysHeading")}
+              </h3>
               {summary.cooldownKeys > 0 && (
                 <Badge
                   variant="outline"
                   className="bg-amber-500/10 text-amber-400 border-amber-500/30 text-xs"
                 >
-                  {summary.cooldownKeys} cooldown
+                  {t("settings.cooldownBadge", {
+                    count: summary.cooldownKeys,
+                  })}
                 </Badge>
               )}
             </div>
@@ -729,7 +1011,7 @@ export function SettingsContent() {
                 <RefreshCw
                   className={cn("size-3.5", refreshing && "animate-spin")}
                 />
-                Refresh
+                {t("settings.refreshButton")}
               </Button>
               <AddKeyDialog
                 onAdd={async (key, label) => {
@@ -778,14 +1060,41 @@ export function SettingsContent() {
                 <KeyCard
                   key={k.id}
                   apiKey={k}
-                  onToggle={() => toggleKey(k.id, k.status)}
-                  onDelete={() => {
-                    removeKey(k.id);
-                    toast.success(t("settings.deletedKey"));
+                  onToggle={async () => {
+                    try {
+                      await toggleKey(k.id, k.status);
+                    } catch (err) {
+                      toast.error(
+                        err instanceof Error
+                          ? err.message
+                          : t("settings.toggleError"),
+                      );
+                    }
                   }}
-                  onRename={(label) => {
-                    updateLabel(k.id, label);
-                    toast.success(t("settings.updatedLabel"));
+                  onDelete={async () => {
+                    try {
+                      await removeKey(k.id);
+                      toast.success(t("settings.deletedKey"));
+                    } catch (err) {
+                      toast.error(
+                        err instanceof Error
+                          ? err.message
+                          : t("settings.deleteError"),
+                      );
+                    }
+                  }}
+                  onRename={async (label) => {
+                    try {
+                      await updateLabel(k.id, label);
+                      toast.success(t("settings.updatedLabel"));
+                    } catch (err) {
+                      toast.error(
+                        err instanceof Error
+                          ? err.message
+                          : t("settings.renameError"),
+                      );
+                      throw err;
+                    }
                   }}
                 />
               ))}

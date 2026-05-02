@@ -9,10 +9,16 @@ Endpoints:
 """
 import uuid
 import logging
+from datetime import timedelta
 from flask import Blueprint, request, jsonify
 
 from app.db import db
-from app.features.api_keys.models import GeminiApiKey, hash_key
+from app.features.api_keys.models import (
+    GeminiApiKey,
+    GeminiApiKeyDailyUsage,
+    hash_key,
+    today_pst,
+)
 from app.features.api_keys.key_manager import get_pool_summary
 
 logger = logging.getLogger(__name__)
@@ -98,3 +104,91 @@ def delete_key(key_id: str):
     db.session.commit()
     logger.info("Deleted Gemini API key: %s", key.masked_key())
     return jsonify({"message": "Key deleted"}), 200
+
+
+@api_keys_bp.route("/<key_id>/usage-history", methods=["GET"])
+def key_usage_history(key_id: str):
+    """Per-day usage for one key. Returns up to ?days=N (default 30, max 365) days
+    going back from today (Pacific Time). Each entry covers one (model, datePst).
+    Days with no activity are NOT included — UI can fill gaps if it wants a chart.
+    """
+    key = GeminiApiKey.query.get(key_id)
+    if not key:
+        return jsonify({"error": "Key not found"}), 404
+
+    try:
+        days = int(request.args.get("days", "30"))
+    except (TypeError, ValueError):
+        days = 30
+    days = max(1, min(days, 365))
+
+    today = today_pst()
+    start_date = today - timedelta(days=days - 1)
+
+    rows = (
+        GeminiApiKeyDailyUsage.query
+        .filter(
+            GeminiApiKeyDailyUsage.key_id == key_id,
+            GeminiApiKeyDailyUsage.date_pst >= start_date,
+        )
+        .order_by(GeminiApiKeyDailyUsage.date_pst.asc())
+        .all()
+    )
+
+    return jsonify({
+        "keyId": key_id,
+        "days": days,
+        "startDatePst": start_date.isoformat(),
+        "endDatePst": today.isoformat(),
+        "entries": [r.to_dict() for r in rows],
+    })
+
+
+@api_keys_bp.route("/usage-history", methods=["GET"])
+def pool_usage_history():
+    """Per-day usage aggregated across ALL keys, grouped by (model, datePst)."""
+    try:
+        days = int(request.args.get("days", "30"))
+    except (TypeError, ValueError):
+        days = 30
+    days = max(1, min(days, 365))
+
+    today = today_pst()
+    start_date = today - timedelta(days=days - 1)
+
+    rows = (
+        GeminiApiKeyDailyUsage.query
+        .filter(GeminiApiKeyDailyUsage.date_pst >= start_date)
+        .all()
+    )
+
+    aggregated: dict[tuple[str, str], dict] = {}
+    for r in rows:
+        bucket_key = (r.date_pst.isoformat(), r.model)
+        bucket = aggregated.setdefault(
+            bucket_key,
+            {
+                "datePst": r.date_pst.isoformat(),
+                "model": r.model,
+                "requests": 0,
+                "inputTokens": 0,
+                "outputTokens": 0,
+            },
+        )
+        bucket["requests"] += r.requests
+        bucket["inputTokens"] += r.input_tokens
+        bucket["outputTokens"] += r.output_tokens
+
+    entries = sorted(
+        aggregated.values(),
+        key=lambda e: (e["datePst"], e["model"]),
+    )
+    for e in entries:
+        e["totalTokens"] = e["inputTokens"] + e["outputTokens"]
+
+    return jsonify({
+        "days": days,
+        "startDatePst": start_date.isoformat(),
+        "endDatePst": today.isoformat(),
+        "entries": entries,
+    })

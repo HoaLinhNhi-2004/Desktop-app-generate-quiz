@@ -87,12 +87,46 @@ def _m_006_uploaded_files_extras(cursor: sqlite3.Cursor) -> None:
     _add_column_if_missing(cursor, "uploaded_files", "chunk_count", "chunk_count INTEGER DEFAULT 0")
 
 
+def _m_007_api_key_daily_usage(cursor: sqlite3.Cursor) -> None:
+    """Per-(key, model, day) usage table. db.create_all() also creates this if
+    SQLAlchemy metadata sees the model — we keep this migration as a belt-and-
+    suspenders for legacy installs and to ensure the unique index exists.
+    """
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS gemini_api_key_daily_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key_id VARCHAR(36) NOT NULL,
+            model VARCHAR(64) NOT NULL,
+            date_pst DATE NOT NULL,
+            requests INTEGER NOT NULL DEFAULT 0,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (key_id) REFERENCES gemini_api_keys(id) ON DELETE CASCADE
+        )
+        """
+    )
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_usage_key_model_date "
+        "ON gemini_api_key_daily_usage(key_id, model, date_pst)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS ix_daily_usage_key_id "
+        "ON gemini_api_key_daily_usage(key_id)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS ix_daily_usage_date_pst "
+        "ON gemini_api_key_daily_usage(date_pst)"
+    )
+
+
 MIGRATIONS: List[Migration] = [
     ("002_api_keys_extras", "API keys: model_usage + key_hash + unique index", _m_002_api_keys_extras),
     ("003_folder_extras", "Folders: is_favorite + last_accessed_at", _m_003_folder_extras),
     ("004_quizset_extras", "Quiz sets: page_distribution + source_upload_ids", _m_004_quizset_extras),
     ("005_question_extras", "Questions: source_pages + source_keyword + correct_answer_ids", _m_005_question_extras),
     ("006_uploaded_files_extras", "Uploaded files: processing_status + processing_error + chunk_count", _m_006_uploaded_files_extras),
+    ("007_api_key_daily_usage", "API keys: per-day usage table for history & RPD tracking", _m_007_api_key_daily_usage),
 ]
 
 

@@ -9,12 +9,21 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 from app.db import db
 from app.features.api_keys.crypto import decrypt, encrypt
 
 logger = logging.getLogger(__name__)
+
+# Gemini free-tier RPD resets at midnight Pacific Time.
+PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+
+
+def today_pst() -> date:
+    """Return current date in Pacific Time — the boundary Gemini uses for RPD reset."""
+    return datetime.now(PACIFIC_TZ).date()
 
 
 def hash_key(raw_key: str) -> str:
@@ -119,6 +128,18 @@ class GeminiApiKey(db.Model):
 
     def to_dict(self, include_full_key: bool = False) -> dict:
         model_usage = self.get_model_usage()
+        today = today_pst()
+        today_rows = GeminiApiKeyDailyUsage.query.filter_by(
+            key_id=self.id, date_pst=today
+        ).all()
+        today_by_model = {
+            row.model: {
+                "requests": row.requests,
+                "inputTokens": row.input_tokens,
+                "outputTokens": row.output_tokens,
+            }
+            for row in today_rows
+        }
         return {
             "id": self.id,
             "label": self.label or "",
@@ -135,10 +156,68 @@ class GeminiApiKey(db.Model):
                     "inputTokens": stats.get("input_tokens", 0),
                     "outputTokens": stats.get("output_tokens", 0),
                     "totalTokens": stats.get("input_tokens", 0) + stats.get("output_tokens", 0),
+                    "requestsToday": today_by_model.get(name, {}).get("requests", 0),
+                    "inputTokensToday": today_by_model.get(name, {}).get("inputTokens", 0),
+                    "outputTokensToday": today_by_model.get(name, {}).get("outputTokens", 0),
                 }
                 for name, stats in model_usage.items()
             },
+            "requestsToday": sum(row.requests for row in today_rows),
+            "datePst": today.isoformat(),
             "lastUsedAt": self.last_used_at.isoformat().replace("+00:00", "Z") if self.last_used_at else None,
             "lastError": self.last_error or "",
             "createdAt": self.created_at.isoformat().replace("+00:00", "Z") if self.created_at else None,
         }
+
+
+class GeminiApiKeyDailyUsage(db.Model):
+    """Per-(key, model, day) usage counter — provides historical view + 'today vs RPD'.
+
+    Reset boundary is midnight Pacific Time, matching how Gemini resets RPD quotas.
+    """
+    __tablename__ = "gemini_api_key_daily_usage"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    key_id = db.Column(
+        db.String(36),
+        db.ForeignKey("gemini_api_keys.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    model = db.Column(db.String(64), nullable=False)
+    date_pst = db.Column(db.Date, nullable=False, index=True)
+    requests = db.Column(db.Integer, nullable=False, default=0)
+    input_tokens = db.Column(db.Integer, nullable=False, default=0)
+    output_tokens = db.Column(db.Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        db.UniqueConstraint("key_id", "model", "date_pst", name="uq_daily_usage_key_model_date"),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "keyId": self.key_id,
+            "model": self.model,
+            "datePst": self.date_pst.isoformat() if self.date_pst else None,
+            "requests": self.requests,
+            "inputTokens": self.input_tokens,
+            "outputTokens": self.output_tokens,
+            "totalTokens": self.input_tokens + self.output_tokens,
+        }
+
+
+def bump_daily_usage(key_id: str, model: str, input_tokens: int, output_tokens: int) -> None:
+    """Increment today's counter (Pacific Time) for (key, model). Creates row if missing."""
+    today = today_pst()
+    row = GeminiApiKeyDailyUsage.query.filter_by(
+        key_id=key_id, model=model, date_pst=today
+    ).first()
+    if row is None:
+        row = GeminiApiKeyDailyUsage(
+            key_id=key_id, model=model, date_pst=today,
+            requests=0, input_tokens=0, output_tokens=0,
+        )
+        db.session.add(row)
+    row.requests += 1
+    row.input_tokens += int(input_tokens or 0)
+    row.output_tokens += int(output_tokens or 0)

@@ -1,5 +1,10 @@
 import { APP_CONFIG } from "@/config/app";
-import type { KeysResponse, GeminiApiKey } from "./types";
+import type {
+  KeysResponse,
+  GeminiApiKey,
+  KeyUsageHistory,
+  PoolUsageHistory,
+} from "./types";
 
 const API_URL = APP_CONFIG.API_URL;
 
@@ -42,4 +47,23 @@ export async function updateKeyApi(
 export async function deleteKeyApi(id: string): Promise<void> {
   const res = await fetch(`${API_URL}/api/keys/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Failed to delete key");
+}
+
+export async function getKeyUsageHistoryApi(
+  keyId: string,
+  days = 30,
+): Promise<KeyUsageHistory> {
+  const res = await fetch(
+    `${API_URL}/api/keys/${keyId}/usage-history?days=${days}`,
+  );
+  if (!res.ok) throw new Error("Failed to fetch key usage history");
+  return res.json();
+}
+
+export async function getPoolUsageHistoryApi(
+  days = 30,
+): Promise<PoolUsageHistory> {
+  const res = await fetch(`${API_URL}/api/keys/usage-history?days=${days}`);
+  if (!res.ok) throw new Error("Failed to fetch pool usage history");
+  return res.json();
 }

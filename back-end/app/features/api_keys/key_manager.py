@@ -10,7 +10,12 @@ import logging
 from datetime import datetime, timezone, timedelta
 
 from app.db import db
-from app.features.api_keys.models import GeminiApiKey
+from app.features.api_keys.models import (
+    GeminiApiKey,
+    GeminiApiKeyDailyUsage,
+    bump_daily_usage,
+    today_pst,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +72,9 @@ def record_success(
     """Record a successful API call with per-model breakdown.
 
     model_stats: {model_name: {requests, input_tokens, output_tokens}, ...}
+
+    Also bumps the per-day counter (Pacific Time) so we can show 'today vs RPD'
+    and historical usage charts.
     """
     key = GeminiApiKey.query.get(key_id)
     if not key:
@@ -78,11 +86,10 @@ def record_success(
     key.last_error = ""
     if model_stats:
         for model_name, stats in model_stats.items():
-            key.add_model_usage(
-                model_name,
-                stats.get("input_tokens", 0),
-                stats.get("output_tokens", 0),
-            )
+            in_tok = int(stats.get("input_tokens", 0) or 0)
+            out_tok = int(stats.get("output_tokens", 0) or 0)
+            key.add_model_usage(model_name, in_tok, out_tok)
+            bump_daily_usage(key_id, model_name, in_tok, out_tok)
     db.session.commit()
 
 
@@ -102,7 +109,11 @@ def record_error(key_id: str, error_msg: str, is_rate_limit: bool = False) -> No
 
 
 def get_pool_summary() -> dict:
-    """Return aggregate stats across all keys, including per-model breakdown."""
+    """Return aggregate stats across all keys, including per-model breakdown.
+
+    Per-model breakdown also includes 'requestsToday' (sum across all keys for
+    the current Pacific Time day) so the UI can show 'X/RPD today'.
+    """
     from app.features.api_keys.models import MODEL_LIMITS
 
     keys = GeminiApiKey.query.all()
@@ -114,7 +125,7 @@ def get_pool_summary() -> dict:
     total_usage = sum(k.usage_count for k in keys)
     total_errors = sum(k.error_count for k in keys)
 
-    # Aggregate per-model usage across all keys
+    # Aggregate per-model usage across all keys (lifetime)
     model_totals: dict[str, dict] = {}
     for k in keys:
         for model_name, stats in k.get_model_usage().items():
@@ -124,10 +135,23 @@ def get_pool_summary() -> dict:
             model_totals[model_name]["input_tokens"] += stats.get("input_tokens", 0)
             model_totals[model_name]["output_tokens"] += stats.get("output_tokens", 0)
 
+    # Today's usage (Pacific Time) per model, summed across all keys
+    today = today_pst()
+    today_rows = GeminiApiKeyDailyUsage.query.filter_by(date_pst=today).all()
+    today_totals: dict[str, dict] = {}
+    for row in today_rows:
+        bucket = today_totals.setdefault(
+            row.model, {"requests": 0, "input_tokens": 0, "output_tokens": 0}
+        )
+        bucket["requests"] += row.requests
+        bucket["input_tokens"] += row.input_tokens
+        bucket["output_tokens"] += row.output_tokens
+
     model_usage_list = []
     all_models = set(model_totals.keys()) | set(MODEL_LIMITS.keys())
     for name in sorted(all_models):
         stats = model_totals.get(name, {"requests": 0, "input_tokens": 0, "output_tokens": 0})
+        today_stats = today_totals.get(name, {"requests": 0, "input_tokens": 0, "output_tokens": 0})
         limits = MODEL_LIMITS.get(name, {})
         in_tok = stats["input_tokens"]
         out_tok = stats["output_tokens"]
@@ -138,6 +162,9 @@ def get_pool_summary() -> dict:
             "inputTokens": in_tok,
             "outputTokens": out_tok,
             "totalTokens": in_tok + out_tok,
+            "requestsToday": today_stats["requests"],
+            "inputTokensToday": today_stats["input_tokens"],
+            "outputTokensToday": today_stats["output_tokens"],
             "limits": {
                 "rpd": limits.get("rpd", 0),
                 "rpm": limits.get("rpm", 0),
@@ -157,4 +184,5 @@ def get_pool_summary() -> dict:
         "totalUsage": total_usage,
         "totalErrors": total_errors,
         "modelUsage": model_usage_list,
+        "datePst": today.isoformat(),
     }

@@ -452,8 +452,50 @@
       "description": "Chi tiết sử dụng và giới hạn từng model Gemini",
       "totalTokens": "Tổng tokens",
       "successRate": "Tỷ lệ thành công",
-      "errorPrefix": "Lỗi:"
+      "errorPrefix": "Lỗi:",
+      "headers": {
+        "model": "Model",
+        "requests": "Requests",
+        "input": "Input",
+        "output": "Output",
+        "todayRpd": "Hôm nay / RPD"
+      }
     },
+    "history": {
+      "buttonLabel": "Lịch sử",
+      "dialogTitle": "Lịch sử sử dụng",
+      "dialogDescription": "Số request và token đã dùng theo từng ngày (theo giờ Pacific Time, mốc reset RPD của Gemini).",
+      "rangeLabel": "Khoảng thời gian",
+      "range7": "7 ngày",
+      "range30": "30 ngày",
+      "range90": "90 ngày",
+      "totalRequests": "Tổng requests",
+      "totalTokens": "Tổng tokens",
+      "noData": "Chưa có dữ liệu trong khoảng này",
+      "loading": "Đang tải lịch sử..."
+    },
+    "status": {
+      "active": "Hoạt động",
+      "cooldown": "Tạm nghỉ",
+      "disabled": "Đã tắt"
+    },
+    "stats": {
+      "tokens": "tokens",
+      "requests": "requests",
+      "errors": "lỗi",
+      "input": "Input",
+      "output": "Output"
+    },
+    "breakdown": {
+      "req": "req",
+      "in": "in",
+      "out": "out"
+    },
+    "keysHeading": "API Keys",
+    "cooldownBadge": "{{count}} đang nghỉ",
+    "refreshButton": "Làm mới",
+    "toggleAriaLabel": "Bật/tắt key",
+    "apiKeyLabel": "API Key *",
     "keyCard": {
       "save": "Lưu",
       "noLabel": "Không có nhãn"
@@ -476,6 +518,9 @@
     },
     "deletedKey": "Đã xóa key",
     "updatedLabel": "Đã cập nhật nhãn",
+    "deleteError": "Không xóa được key",
+    "toggleError": "Không đổi được trạng thái key",
+    "renameError": "Không cập nhật được nhãn",
     "freeTier": {
       "title": "Giới hạn Free Tier (Gemini API)",
       "description": "Rate limit cho mỗi API key, mỗi model có quota riêng",

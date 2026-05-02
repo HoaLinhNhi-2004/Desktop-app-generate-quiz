@@ -3,6 +3,9 @@ export interface ModelUsageStats {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  requestsToday?: number;
+  inputTokensToday?: number;
+  outputTokensToday?: number;
 }
 
 export interface ModelSummary {
@@ -12,6 +15,9 @@ export interface ModelSummary {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  requestsToday: number;
+  inputTokensToday: number;
+  outputTokensToday: number;
   limits: {
     rpd: number;
     rpm: number;
@@ -31,9 +37,35 @@ export interface GeminiApiKey {
   totalOutputTokens: number;
   totalTokens: number;
   modelUsage: Record<string, ModelUsageStats>;
+  requestsToday: number;
+  datePst: string;
   lastUsedAt: string | null;
   lastError: string;
   createdAt: string | null;
+}
+
+export interface DailyUsageEntry {
+  datePst: string;
+  model: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface KeyUsageHistory {
+  keyId: string;
+  days: number;
+  startDatePst: string;
+  endDatePst: string;
+  entries: DailyUsageEntry[];
+}
+
+export interface PoolUsageHistory {
+  days: number;
+  startDatePst: string;
+  endDatePst: string;
+  entries: DailyUsageEntry[];
 }
 
 export interface KeyPoolSummary {
