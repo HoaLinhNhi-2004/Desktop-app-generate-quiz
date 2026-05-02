@@ -67,3 +67,7 @@ docs/online_exam_proposal.md
 auto_dataset_builder_proposal.md
 docs/auto_dataset_builder_proposal.md
 docs/smart_folder_import_proposal.md
+
+tests/
+CLAUDE.md
+/.claude/
