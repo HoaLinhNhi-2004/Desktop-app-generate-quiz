@@ -1,12 +1,28 @@
 import os
+import secrets
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
+def _resolve_secret_key() -> str:
+    """SECRET_KEY policy:
+      - Production (FLASK_ENV=production): must be set via env, otherwise raise.
+      - Development: prefer env, fall back to a per-process random key.
+    """
+    env_key = os.getenv("SECRET_KEY", "").strip()
+    if env_key:
+        return env_key
+    if os.getenv("FLASK_ENV", "development").lower() == "production":
+        raise RuntimeError(
+            "SECRET_KEY must be set via environment when FLASK_ENV=production"
+        )
+    return secrets.token_hex(32)
+
+
 class Config:
     """Base configuration"""
-    SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
+    SECRET_KEY = _resolve_secret_key()
 
     # When set (e.g. by Electron desktop app), DB and uploads use this base path
     _user_data_path = os.getenv("USER_DATA_PATH", "").strip()
