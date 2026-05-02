@@ -27,6 +27,10 @@ const emptySummary: KeyPoolSummary = {
   totalTokens: 0,
   totalUsage: 0,
   totalErrors: 0,
+  totalRequestsToday: 0,
+  totalInputTokensToday: 0,
+  totalOutputTokensToday: 0,
+  totalTokensToday: 0,
   modelUsage: [],
 };
 

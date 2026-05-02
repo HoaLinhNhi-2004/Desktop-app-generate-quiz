@@ -38,6 +38,9 @@ export interface GeminiApiKey {
   totalTokens: number;
   modelUsage: Record<string, ModelUsageStats>;
   requestsToday: number;
+  inputTokensToday: number;
+  outputTokensToday: number;
+  tokensToday: number;
   datePst: string;
   lastUsedAt: string | null;
   lastError: string;
@@ -78,6 +81,11 @@ export interface KeyPoolSummary {
   totalTokens: number;
   totalUsage: number;
   totalErrors: number;
+  totalRequestsToday: number;
+  totalInputTokensToday: number;
+  totalOutputTokensToday: number;
+  totalTokensToday: number;
+  datePst?: string;
   modelUsage: ModelSummary[];
 }
 

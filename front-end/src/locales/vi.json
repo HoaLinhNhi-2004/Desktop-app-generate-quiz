@@ -448,17 +448,23 @@
       "addButton": "Thêm key"
     },
     "modelUsage": {
-      "title": "Token theo Model",
-      "description": "Chi tiết sử dụng và giới hạn từng model Gemini",
+      "title": "Sử dụng theo Model",
+      "description": "Quota Gemini reset 00:00 Pacific Time mỗi ngày — số bên dưới là tình trạng hôm nay so với giới hạn",
       "totalTokens": "Tổng tokens",
       "successRate": "Tỷ lệ thành công",
       "errorPrefix": "Lỗi:",
+      "today": "Hôm nay",
+      "lifetime": "Tích lũy",
+      "lifetimeTooltip": "Tổng kể từ khi thêm key (không reset)",
+      "tokensTodayShort": "tokens hôm nay",
       "headers": {
         "model": "Model",
         "requests": "Requests",
         "input": "Input",
         "output": "Output",
-        "todayRpd": "Hôm nay / RPD"
+        "todayRpd": "Requests / RPD",
+        "tokensToday": "Tokens hôm nay",
+        "lifetime": "Tích lũy"
       }
     },
     "history": {
@@ -498,18 +504,38 @@
     "apiKeyLabel": "API Key *",
     "keyCard": {
       "save": "Lưu",
-      "noLabel": "Không có nhãn"
+      "noLabel": "Không có nhãn",
+      "todayLabel": "Hôm nay",
+      "lifetimeLabel": "Tích lũy",
+      "todayRequestsTokens": "{{requests}} requests · {{tokens}} tokens",
+      "lifetimeRequestsTokens": "{{requests}} requests · {{tokens}} tokens"
     },
     "summary": {
       "totalKeys": "Tổng key",
       "activeKeys": "Đang hoạt động",
-      "totalTokens": "Tổng tokens",
-      "totalRequests": "Tổng requests"
+      "tokensToday": "Tokens hôm nay",
+      "requestsToday": "Requests hôm nay",
+      "lifetimeCaption": "Tích lũy: {{value}}",
+      "resetHint": "Reset 00:00 Pacific Time mỗi ngày · {{date}}"
     },
     "tokenUsage": {
-      "title": "Token Usage",
-      "description": "Tổng tokens đã sử dụng trên tất cả key",
-      "total": "Tổng"
+      "title": "Token usage hôm nay",
+      "description": "Input / output trong ngày hiện tại (theo Pacific Time). Tích lũy: {{lifetime}} tokens",
+      "total": "Tổng",
+      "noUsageToday": "Chưa có request nào hôm nay"
+    },
+    "poolHistory": {
+      "title": "Lịch sử pool",
+      "description": "Tổng requests và tokens theo ngày, gộp toàn bộ key trong pool",
+      "loading": "Đang tải lịch sử...",
+      "noData": "Chưa có dữ liệu trong khoảng này",
+      "totalRequests": "Tổng requests",
+      "totalTokens": "Tổng tokens",
+      "perDayAvg": "Trung bình/ngày",
+      "byModel": "Theo model",
+      "stacked": "Stacked",
+      "requests": "Requests",
+      "tokens": "Tokens"
     },
     "loading": "Đang tải...",
     "emptyState": {

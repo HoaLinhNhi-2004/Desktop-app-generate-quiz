@@ -1,8 +1,12 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "@/config/i18n";
 import { cn } from "@/lib/utils";
-import { useApiKeys, useKeyUsageHistory } from "@/features/api-keys";
+import {
+  useApiKeys,
+  useKeyUsageHistory,
+  usePoolUsageHistory,
+} from "@/features/api-keys";
 import type {
   DailyUsageEntry,
   GeminiApiKey,
@@ -274,21 +278,14 @@ function ModelUsageTable({ models }: { models: ModelSummary[] }) {
                   {t("settings.modelUsage.headers.model")}
                 </th>
                 <th className="pb-2 px-3 font-medium text-right">
-                  {t("settings.modelUsage.headers.requests")}
-                </th>
-                <th className="pb-2 px-3 font-medium text-right">
-                  {t("settings.modelUsage.headers.input")}
-                </th>
-                <th className="pb-2 px-3 font-medium text-right">
-                  {t("settings.modelUsage.headers.output")}
-                </th>
-                <th className="pb-2 px-3 font-medium text-right">
-                  {t("settings.modelUsage.totalTokens")}
-                </th>
-                <th className="pb-2 px-3 font-medium text-right">
                   {t("settings.modelUsage.headers.todayRpd")}
                 </th>
-                <th className="pb-2 px-3 font-medium text-right">RPD</th>
+                <th className="pb-2 px-3 font-medium text-right">
+                  {t("settings.modelUsage.headers.tokensToday")}
+                </th>
+                <th className="pb-2 px-3 font-medium text-right">
+                  {t("settings.modelUsage.headers.lifetime")}
+                </th>
                 <th className="pb-2 px-3 font-medium text-right">RPM</th>
                 <th className="pb-2 pl-3 font-medium text-right">TPM</th>
               </tr>
@@ -296,6 +293,7 @@ function ModelUsageTable({ models }: { models: ModelSummary[] }) {
             <tbody>
               {models.map((m) => {
                 const color = modelColors[m.model] || "text-foreground";
+                const tokensToday = m.inputTokensToday + m.outputTokensToday;
                 return (
                   <tr
                     key={m.model}
@@ -314,54 +312,45 @@ function ModelUsageTable({ models }: { models: ModelSummary[] }) {
                         </div>
                       </div>
                     </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-xs">
-                      {m.requests > 0 ? (
-                        <span className="text-foreground">{m.requests}</span>
-                      ) : (
-                        <span className="text-muted-foreground/50">-</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-xs">
-                      {m.inputTokens > 0 ? (
-                        <span className="text-blue-400">
-                          {formatNumber(m.inputTokens)}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground/50">-</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-xs">
-                      {m.outputTokens > 0 ? (
-                        <span className="text-violet-400">
-                          {formatNumber(m.outputTokens)}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground/50">-</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-mono text-xs font-semibold">
-                      {m.totalTokens > 0 ? (
-                        formatNumber(m.totalTokens)
-                      ) : (
-                        <span className="text-muted-foreground/50">-</span>
-                      )}
-                    </td>
                     <td className="py-2.5 px-3 text-right">
                       <TodayVsRpdCell
                         requestsToday={m.requestsToday}
                         rpd={m.limits?.rpd ?? 0}
                       />
                     </td>
-                    <td className="py-2.5 px-3 text-right">
-                      {m.limits ? (
-                        <span className="text-xs text-muted-foreground">
-                          {m.limits.rpd}
-                          {t("settings.rateLimit.perDay")}
-                        </span>
+                    <td className="py-2.5 px-3 text-right font-mono text-xs">
+                      {tokensToday > 0 ? (
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="font-semibold">
+                            {formatNumber(tokensToday)}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">
+                            <span className="text-blue-400">
+                              {formatNumber(m.inputTokensToday)}
+                            </span>
+                            {" / "}
+                            <span className="text-violet-400">
+                              {formatNumber(m.outputTokensToday)}
+                            </span>
+                          </span>
+                        </div>
                       ) : (
-                        <span className="text-muted-foreground/50 text-xs">
-                          -
-                        </span>
+                        <span className="text-muted-foreground/50">-</span>
+                      )}
+                    </td>
+                    <td
+                      className="py-2.5 px-3 text-right font-mono text-xs text-muted-foreground"
+                      title={t("settings.modelUsage.lifetimeTooltip")}
+                    >
+                      {m.requests > 0 ? (
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span>{m.requests} req</span>
+                          <span className="text-[10px]">
+                            {formatNumber(m.totalTokens)} tok
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground/50">-</span>
                       )}
                     </td>
                     <td className="py-2.5 px-3 text-right">
@@ -711,66 +700,88 @@ function KeyCard({
               {apiKey.key}
             </p>
 
-            {/* Stats row */}
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <Zap className="size-3 text-blue-400" />
-                <strong className="text-foreground">
-                  {formatNumber(totalTokens)}
-                </strong>{" "}
-                {t("settings.stats.tokens")}
+            {/* Today stats — primary */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+              <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70 font-medium">
+                {t("settings.keyCard.todayLabel")}
               </span>
-              <span className="flex items-center gap-1">
+              <span className="flex items-center gap-1 text-foreground">
                 <Activity className="size-3 text-purple-400" />
-                <strong className="text-foreground">
-                  {apiKey.usageCount}
-                </strong>{" "}
-                {t("settings.stats.requests")}
-              </span>
-              {apiKey.errorCount > 0 && (
-                <span className="flex items-center gap-1">
-                  <AlertTriangle className="size-3 text-red-400" />
-                  <strong className="text-red-400">
-                    {apiKey.errorCount}
-                  </strong>{" "}
-                  {t("settings.stats.errors")}
+                <strong>{apiKey.requestsToday}</strong>{" "}
+                <span className="text-muted-foreground">
+                  {t("settings.stats.requests")}
                 </span>
-              )}
-              <span className="flex items-center gap-1">
+              </span>
+              <span className="flex items-center gap-1 text-foreground">
+                <Zap className="size-3 text-blue-400" />
+                <strong>{formatNumber(apiKey.tokensToday)}</strong>{" "}
+                <span className="text-muted-foreground">
+                  {t("settings.stats.tokens")}
+                </span>
+              </span>
+              <span className="flex items-center gap-1 text-muted-foreground">
                 <Clock className="size-3" />
                 {timeAgo(apiKey.lastUsedAt)}
               </span>
             </div>
 
-            {/* Token breakdown bar */}
-            {totalTokens > 0 && (
+            {/* Today token breakdown bar */}
+            {apiKey.tokensToday > 0 && (
               <div className="space-y-1">
                 <div className="flex items-center justify-between text-[10px] text-muted-foreground">
                   <span>
                     {t("settings.stats.input")}:{" "}
-                    {formatNumber(apiKey.totalInputTokens)}
+                    {formatNumber(apiKey.inputTokensToday)}
                   </span>
                   <span>
                     {t("settings.stats.output")}:{" "}
-                    {formatNumber(apiKey.totalOutputTokens)}
+                    {formatNumber(apiKey.outputTokensToday)}
                   </span>
                 </div>
                 <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
                   <div
                     className="bg-blue-500 transition-all"
                     style={{
-                      width: `${(apiKey.totalInputTokens / totalTokens) * 100}%`,
+                      width: `${(apiKey.inputTokensToday / apiKey.tokensToday) * 100}%`,
                     }}
                   />
                   <div
                     className="bg-violet-500 transition-all"
                     style={{
-                      width: `${(apiKey.totalOutputTokens / totalTokens) * 100}%`,
+                      width: `${(apiKey.outputTokensToday / apiKey.tokensToday) * 100}%`,
                     }}
                   />
                 </div>
               </div>
             )}
+
+            {/* Lifetime stats — secondary */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground/70">
+              <span className="uppercase tracking-wide font-medium">
+                {t("settings.keyCard.lifetimeLabel")}
+              </span>
+              <span>
+                <strong className="text-muted-foreground">
+                  {apiKey.usageCount}
+                </strong>{" "}
+                {t("settings.stats.requests")}
+              </span>
+              <span>
+                <strong className="text-muted-foreground">
+                  {formatNumber(totalTokens)}
+                </strong>{" "}
+                {t("settings.stats.tokens")}
+              </span>
+              {apiKey.errorCount > 0 && (
+                <span className="flex items-center gap-1">
+                  <AlertTriangle className="size-2.5 text-red-400" />
+                  <strong className="text-red-400">
+                    {apiKey.errorCount}
+                  </strong>{" "}
+                  {t("settings.stats.errors")}
+                </span>
+              )}
+            </div>
 
             {/* Per-model breakdown */}
             <KeyModelBreakdown modelUsage={apiKey.modelUsage} />
@@ -848,6 +859,160 @@ function KeyCard({
   );
 }
 
+// ─── Pool history card (combined across all keys) ────────────────────────────
+
+type PoolHistoryRange = 7 | 30 | 90;
+
+function PoolHistoryCard() {
+  const { t } = useTranslation();
+  const [range, setRange] = useState<PoolHistoryRange>(30);
+  const { data, isLoading } = usePoolUsageHistory(range);
+
+  const { chartData, totalRequests, totalTokens, perDayAvg } = useMemo(() => {
+    const entries = data?.entries ?? [];
+    const byDate = new Map<
+      string,
+      { date: string; requests: number; totalTokens: number }
+    >();
+    for (const e of entries) {
+      const bucket = byDate.get(e.datePst) ?? {
+        date: e.datePst,
+        requests: 0,
+        totalTokens: 0,
+      };
+      bucket.requests += e.requests;
+      bucket.totalTokens += e.totalTokens;
+      byDate.set(e.datePst, bucket);
+    }
+    const rows = Array.from(byDate.values()).sort((a, b) =>
+      a.date.localeCompare(b.date),
+    );
+    const totReq = rows.reduce((s, r) => s + r.requests, 0);
+    const totTok = rows.reduce((s, r) => s + r.totalTokens, 0);
+    return {
+      chartData: rows,
+      totalRequests: totReq,
+      totalTokens: totTok,
+      perDayAvg: rows.length > 0 ? Math.round(totReq / rows.length) : 0,
+    };
+  }, [data]);
+
+  return (
+    <Card className="border-border/50 bg-card/50">
+      <CardHeader className="pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <History className="size-4 text-primary" />
+              {t("settings.poolHistory.title")}
+            </CardTitle>
+            <CardDescription>
+              {t("settings.poolHistory.description")}
+            </CardDescription>
+          </div>
+          <div className="flex gap-1 shrink-0">
+            {([7, 30, 90] as const).map((r) => (
+              <Button
+                key={r}
+                size="sm"
+                variant={range === r ? "default" : "outline"}
+                className="h-7 text-xs"
+                onClick={() => setRange(r)}
+              >
+                {t(`settings.history.range${r}`)}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-3 gap-3">
+          <div className="rounded-lg border border-border/50 bg-card/50 p-3">
+            <p className="text-[10px] text-muted-foreground">
+              {t("settings.poolHistory.totalRequests")}
+            </p>
+            <p className="text-xl font-semibold">{totalRequests}</p>
+          </div>
+          <div className="rounded-lg border border-border/50 bg-card/50 p-3">
+            <p className="text-[10px] text-muted-foreground">
+              {t("settings.poolHistory.totalTokens")}
+            </p>
+            <p className="text-xl font-semibold">
+              {formatNumber(totalTokens)}
+            </p>
+          </div>
+          <div className="rounded-lg border border-border/50 bg-card/50 p-3">
+            <p className="text-[10px] text-muted-foreground">
+              {t("settings.poolHistory.perDayAvg")}
+            </p>
+            <p className="text-xl font-semibold">{perDayAvg}</p>
+          </div>
+        </div>
+
+        <div className="h-56">
+          {isLoading ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              <RefreshCw className="size-4 animate-spin mr-2" />
+              {t("settings.poolHistory.loading")}
+            </div>
+          ) : chartData.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              {t("settings.poolHistory.noData")}
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={chartData}
+                margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
+              >
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="hsl(var(--border))"
+                  opacity={0.15}
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 10, fill: "currentColor" }}
+                  className="text-muted-foreground"
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v: string) => v.slice(5)}
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fill: "currentColor" }}
+                  className="text-muted-foreground"
+                  axisLine={false}
+                  tickLine={false}
+                  width={32}
+                />
+                <RechartsTooltip
+                  contentStyle={{
+                    backgroundColor: "hsl(var(--card))",
+                    border: "1px solid hsl(var(--border))",
+                    borderRadius: 8,
+                    fontSize: 11,
+                    padding: "6px 10px",
+                    color: "hsl(var(--foreground))",
+                  }}
+                  cursor={{ fill: "hsl(var(--muted))", opacity: 0.1 }}
+                />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Bar
+                  dataKey="requests"
+                  fill="hsl(217 91% 60%)"
+                  name={t("settings.poolHistory.requests")}
+                  radius={[3, 3, 0, 0]}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export function SettingsContent() {
@@ -874,7 +1039,7 @@ export function SettingsContent() {
   return (
     <ScrollArea className="h-full w-full">
       <div className="mx-auto max-w-4xl space-y-6 p-6">
-        {/* Summary cards */}
+        {/* Summary cards — TODAY-primary, lifetime as caption */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Card className="border-border/50 bg-card/50">
             <CardContent className="p-4 text-center">
@@ -898,86 +1063,113 @@ export function SettingsContent() {
           </Card>
           <Card className="border-border/50 bg-card/50">
             <CardContent className="p-4 text-center">
-              <div className="text-2xl font-bold text-blue-400">
-                {formatNumber(summary.totalTokens)}
+              <div className="text-2xl font-bold text-purple-400">
+                {summary.totalRequestsToday}
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {t("settings.summary.totalTokens")}
+                {t("settings.summary.requestsToday")}
+              </p>
+              <p className="text-[10px] text-muted-foreground/70 mt-0.5">
+                {t("settings.summary.lifetimeCaption", {
+                  value: summary.totalUsage,
+                })}
               </p>
             </CardContent>
           </Card>
           <Card className="border-border/50 bg-card/50">
             <CardContent className="p-4 text-center">
-              <div className="text-2xl font-bold text-purple-400">
-                {summary.totalUsage}
+              <div className="text-2xl font-bold text-blue-400">
+                {formatNumber(summary.totalTokensToday)}
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {t("settings.summary.totalRequests")}
+                {t("settings.summary.tokensToday")}
+              </p>
+              <p className="text-[10px] text-muted-foreground/70 mt-0.5">
+                {t("settings.summary.lifetimeCaption", {
+                  value: formatNumber(summary.totalTokens),
+                })}
               </p>
             </CardContent>
           </Card>
         </div>
 
-        {/* Token breakdown */}
-        {summary.totalTokens > 0 && (
-          <Card className="border-border/50 bg-card/50">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">
-                {t("settings.tokenUsage.title")}
-              </CardTitle>
-              <CardDescription>
-                {t("settings.tokenUsage.description")}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex h-3 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="bg-blue-500 transition-all"
-                  style={{
-                    width: `${(summary.totalInputTokens / summary.totalTokens) * 100}%`,
-                  }}
-                />
-                <div
-                  className="bg-violet-500 transition-all"
-                  style={{
-                    width: `${(summary.totalOutputTokens / summary.totalTokens) * 100}%`,
-                  }}
-                />
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <div className="flex items-center gap-2">
-                  <div className="size-2.5 rounded-full bg-blue-500" />
-                  <span className="text-muted-foreground">
-                    {t("settings.stats.input")}
-                  </span>
-                  <span className="font-medium">
-                    {formatNumber(summary.totalInputTokens)}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="size-2.5 rounded-full bg-violet-500" />
-                  <span className="text-muted-foreground">
-                    {t("settings.stats.output")}
-                  </span>
-                  <span className="font-medium">
-                    {formatNumber(summary.totalOutputTokens)}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground">
-                    {t("settings.tokenUsage.total")}
-                  </span>
-                  <span className="font-bold">
-                    {formatNumber(summary.totalTokens)}
-                  </span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+        {summary.datePst && (
+          <p className="text-[10px] text-muted-foreground/70 text-center -mt-3">
+            {t("settings.summary.resetHint", { date: summary.datePst })}
+          </p>
         )}
+
+        {/* Token usage today */}
+        <Card className="border-border/50 bg-card/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium">
+              {t("settings.tokenUsage.title")}
+            </CardTitle>
+            <CardDescription>
+              {t("settings.tokenUsage.description", {
+                lifetime: formatNumber(summary.totalTokens),
+              })}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {summary.totalTokensToday <= 0 ? (
+              <p className="text-sm text-muted-foreground/70 text-center py-4">
+                {t("settings.tokenUsage.noUsageToday")}
+              </p>
+            ) : (
+              <>
+                <div className="flex h-3 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="bg-blue-500 transition-all"
+                    style={{
+                      width: `${(summary.totalInputTokensToday / summary.totalTokensToday) * 100}%`,
+                    }}
+                  />
+                  <div
+                    className="bg-violet-500 transition-all"
+                    style={{
+                      width: `${(summary.totalOutputTokensToday / summary.totalTokensToday) * 100}%`,
+                    }}
+                  />
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
+                  <div className="flex items-center gap-2">
+                    <div className="size-2.5 rounded-full bg-blue-500" />
+                    <span className="text-muted-foreground">
+                      {t("settings.stats.input")}
+                    </span>
+                    <span className="font-medium">
+                      {formatNumber(summary.totalInputTokensToday)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="size-2.5 rounded-full bg-violet-500" />
+                    <span className="text-muted-foreground">
+                      {t("settings.stats.output")}
+                    </span>
+                    <span className="font-medium">
+                      {formatNumber(summary.totalOutputTokensToday)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">
+                      {t("settings.tokenUsage.total")}
+                    </span>
+                    <span className="font-bold">
+                      {formatNumber(summary.totalTokensToday)}
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Per-model usage table */}
         <ModelUsageTable models={summary.modelUsage ?? []} />
+
+        {/* Pool history */}
+        <PoolHistoryCard />
 
         <Separator />
 

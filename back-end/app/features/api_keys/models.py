@@ -140,6 +140,8 @@ class GeminiApiKey(db.Model):
             }
             for row in today_rows
         }
+        input_tokens_today = sum(row.input_tokens for row in today_rows)
+        output_tokens_today = sum(row.output_tokens for row in today_rows)
         return {
             "id": self.id,
             "label": self.label or "",
@@ -163,6 +165,9 @@ class GeminiApiKey(db.Model):
                 for name, stats in model_usage.items()
             },
             "requestsToday": sum(row.requests for row in today_rows),
+            "inputTokensToday": input_tokens_today,
+            "outputTokensToday": output_tokens_today,
+            "tokensToday": input_tokens_today + output_tokens_today,
             "datePst": today.isoformat(),
             "lastUsedAt": self.last_used_at.isoformat().replace("+00:00", "Z") if self.last_used_at else None,
             "lastError": self.last_error or "",

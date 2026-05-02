@@ -173,6 +173,10 @@ def get_pool_summary() -> dict:
             } if limits else None,
         })
 
+    total_requests_today = sum(row.requests for row in today_rows)
+    total_input_today = sum(row.input_tokens for row in today_rows)
+    total_output_today = sum(row.output_tokens for row in today_rows)
+
     return {
         "totalKeys": len(keys),
         "activeKeys": active,
@@ -183,6 +187,10 @@ def get_pool_summary() -> dict:
         "totalTokens": total_input + total_output,
         "totalUsage": total_usage,
         "totalErrors": total_errors,
+        "totalRequestsToday": total_requests_today,
+        "totalInputTokensToday": total_input_today,
+        "totalOutputTokensToday": total_output_today,
+        "totalTokensToday": total_input_today + total_output_today,
         "modelUsage": model_usage_list,
         "datePst": today.isoformat(),
     }
