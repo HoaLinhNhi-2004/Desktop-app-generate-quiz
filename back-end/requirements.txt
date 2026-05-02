@@ -3,6 +3,7 @@ flask
 flask-cors
 flask-sqlalchemy
 python-dotenv
+cryptography  # AES-GCM at-rest encryption for Gemini API keys
 
 # Image processing
 pillow

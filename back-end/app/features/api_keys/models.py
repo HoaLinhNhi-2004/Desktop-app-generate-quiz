@@ -1,10 +1,24 @@
 """
 API Keys feature - SQLAlchemy models for managing multiple Gemini API keys.
+
+The raw key is encrypted at rest (see crypto.py). A SHA-256 hash of the
+plaintext is stored separately to support duplicate detection without
+needing to decrypt every row.
 """
+import hashlib
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
+
 from app.db import db
+from app.features.api_keys.crypto import decrypt, encrypt
+
+logger = logging.getLogger(__name__)
+
+
+def hash_key(raw_key: str) -> str:
+    return hashlib.sha256((raw_key or "").encode("utf-8")).hexdigest()
 
 
 # Gemini free-tier rate limits per model (as of 2026)
@@ -38,7 +52,11 @@ class GeminiApiKey(db.Model):
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     label = db.Column(db.String(255), default="")
-    key = db.Column(db.String(512), nullable=False, unique=True)
+    # Ciphertext column (mapped to "key" for backward compatibility with the
+    # existing schema). Access plaintext via the `key` property.
+    _key = db.Column("key", db.String(1024), nullable=False)
+    # SHA-256 of the plaintext key — used for duplicate lookup without decrypt.
+    key_hash = db.Column(db.String(64), nullable=True, unique=True, index=True)
 
     status = db.Column(db.String(20), default="active")  # active | cooldown | disabled
     usage_count = db.Column(db.Integer, default=0)
@@ -54,6 +72,26 @@ class GeminiApiKey(db.Model):
     cooldown_until = db.Column(db.DateTime, nullable=True)
 
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+    @property
+    def key(self) -> str:
+        if not self._key:
+            return ""
+        try:
+            return decrypt(self._key)
+        except Exception:
+            logger.exception("Failed to decrypt API key id=%s", self.id)
+            return ""
+
+    @key.setter
+    def key(self, value: str) -> None:
+        plain = (value or "").strip()
+        if plain:
+            self._key = encrypt(plain)
+            self.key_hash = hash_key(plain)
+        else:
+            self._key = ""
+            self.key_hash = None
 
     def get_model_usage(self) -> dict:
         try:

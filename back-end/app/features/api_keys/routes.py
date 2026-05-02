@@ -12,7 +12,7 @@ import logging
 from flask import Blueprint, request, jsonify
 
 from app.db import db
-from app.features.api_keys.models import GeminiApiKey
+from app.features.api_keys.models import GeminiApiKey, hash_key
 from app.features.api_keys.key_manager import get_pool_summary
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ def add_key():
 
     raw_key = data["key"].strip()
 
-    existing = GeminiApiKey.query.filter_by(key=raw_key).first()
+    existing = GeminiApiKey.query.filter_by(key_hash=hash_key(raw_key)).first()
     if existing:
         return jsonify({"error": "This key already exists"}), 409
 

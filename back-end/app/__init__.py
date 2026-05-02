@@ -3,78 +3,47 @@ from flask import Flask
 from flask_cors import CORS
 from config import get_config
 from app.db import db
+from app.migrations import run_migrations
 
 
-def _add_missing_columns(app):
-    """Add columns that create_all() won't add to existing tables."""
-    import sqlite3
-    db_uri = app.config.get("SQLALCHEMY_DATABASE_URI", "")
-    if not db_uri.startswith("sqlite:///"):
-        return
-    db_path = db_uri.replace("sqlite:///", "")
+def _encrypt_existing_api_keys(app):
+    """Encrypt any plaintext API keys left over from before at-rest encryption,
+    and backfill key_hash for rows that lack it.
+    """
+    from app.features.api_keys.crypto import encrypt, is_encrypted
+    from app.features.api_keys.models import GeminiApiKey, hash_key
+
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(gemini_api_keys)")
-        existing = {row[1] for row in cursor.fetchall()}
-        if "model_usage" not in existing:
-            cursor.execute("ALTER TABLE gemini_api_keys ADD COLUMN model_usage TEXT DEFAULT '{}'")
-            conn.commit()
-            app.logger.info("Added model_usage column to gemini_api_keys")
-
-        cursor.execute("PRAGMA table_info(folders)")
-        folder_cols = {row[1] for row in cursor.fetchall()}
-        if "is_favorite" not in folder_cols:
-            cursor.execute("ALTER TABLE folders ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0")
-            conn.commit()
-            app.logger.info("Added is_favorite column to folders")
-        if "last_accessed_at" not in folder_cols:
-            cursor.execute("ALTER TABLE folders ADD COLUMN last_accessed_at DATETIME")
-            conn.commit()
-            app.logger.info("Added last_accessed_at column to folders")
-
-        cursor.execute("PRAGMA table_info(quiz_sets)")
-        quiz_set_cols = {row[1] for row in cursor.fetchall()}
-        if "page_distribution" not in quiz_set_cols:
-            cursor.execute("ALTER TABLE quiz_sets ADD COLUMN page_distribution TEXT")
-            conn.commit()
-            app.logger.info("Added page_distribution column to quiz_sets")
-        if "source_upload_ids" not in quiz_set_cols:
-            cursor.execute("ALTER TABLE quiz_sets ADD COLUMN source_upload_ids TEXT")
-            conn.commit()
-            app.logger.info("Added source_upload_ids column to quiz_sets")
-
-        cursor.execute("PRAGMA table_info(questions)")
-        question_cols = {row[1] for row in cursor.fetchall()}
-        if "source_pages" not in question_cols:
-            cursor.execute("ALTER TABLE questions ADD COLUMN source_pages TEXT")
-            conn.commit()
-            app.logger.info("Added source_pages column to questions")
-        if "source_keyword" not in question_cols:
-            cursor.execute("ALTER TABLE questions ADD COLUMN source_keyword TEXT")
-            conn.commit()
-            app.logger.info("Added source_keyword column to questions")
-        if "correct_answer_ids" not in question_cols:
-            cursor.execute("ALTER TABLE questions ADD COLUMN correct_answer_ids TEXT")
-            conn.commit()
-            app.logger.info("Added correct_answer_ids column to questions")
-
-        # uploaded_files: RAG processing columns
-        cursor.execute("PRAGMA table_info(uploaded_files)")
-        upload_cols = {row[1] for row in cursor.fetchall()}
-        for col, sql in [
-            ("processing_status", "ALTER TABLE uploaded_files ADD COLUMN processing_status VARCHAR(16) DEFAULT 'pending'"),
-            ("processing_error", "ALTER TABLE uploaded_files ADD COLUMN processing_error TEXT"),
-            ("chunk_count", "ALTER TABLE uploaded_files ADD COLUMN chunk_count INTEGER DEFAULT 0"),
-        ]:
-            if col not in upload_cols:
-                cursor.execute(sql)
-                conn.commit()
-                app.logger.info("Added %s column to uploaded_files", col)
-
-        conn.close()
+        rows = GeminiApiKey.query.all()
     except Exception as e:
-        app.logger.warning("Column migration check failed: %s", e)
+        app.logger.warning("Could not load API keys for encryption migration: %s", e)
+        return
+
+    changed = 0
+    for row in rows:
+        try:
+            if not row._key:
+                continue
+            if not is_encrypted(row._key):
+                plaintext = row._key
+                row._key = encrypt(plaintext)
+                row.key_hash = hash_key(plaintext)
+                changed += 1
+            elif not row.key_hash:
+                plaintext = row.key  # via property → decrypt
+                if plaintext:
+                    row.key_hash = hash_key(plaintext)
+                    changed += 1
+        except Exception as e:
+            app.logger.warning("Skipping API key migration for id=%s: %s", row.id, e)
+
+    if changed:
+        try:
+            db.session.commit()
+            app.logger.info("Encrypted/backfilled %d API key row(s)", changed)
+        except Exception as e:
+            app.logger.warning("API key encryption commit failed: %s", e)
+            db.session.rollback()
 
 
 def _migrate_folders_json_if_needed(app):
@@ -140,7 +109,8 @@ def create_app(config_class=None):
         from app.features.stats.models import QuizAttempt  # noqa: F401
         from app.features.api_keys.models import GeminiApiKey  # noqa: F401
         db.create_all()
-        _add_missing_columns(app)
+        run_migrations(app.config.get("SQLALCHEMY_DATABASE_URI", ""), app.logger)
+        _encrypt_existing_api_keys(app)
         _migrate_folders_json_if_needed(app)
 
     # Enable CORS
