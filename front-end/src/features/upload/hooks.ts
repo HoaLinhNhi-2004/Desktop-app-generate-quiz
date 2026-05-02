@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import {
   getUploadRecordsApi,
   deleteUploadRecordApi,
@@ -9,6 +10,7 @@ import {
 } from "./api";
 import type { UploadMaterialsOptions } from "./api";
 import type { UploadRecord } from "./types";
+import { notifyInfo, notifyError } from "@/lib/notify";
 
 /**
  * Hook to list upload records for a folder.
@@ -81,10 +83,17 @@ export function useUploadMaterials() {
  */
 export function useReprocessUpload() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
   return useMutation<UploadRecord, Error, string>({
     mutationFn: reprocessUploadApi,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["uploadRecords"] });
+      notifyInfo(t("notifications.upload.reprocessStarted"));
+    },
+    onError: (err) => {
+      notifyError(t("notifications.upload.reprocessFailed"), {
+        description: err.message,
+      });
     },
   });
 }

@@ -7,6 +7,7 @@ electron.contextBridge.exposeInMainWorld("electron", {
     }),
   getStaticData: () => ipcInvoke("getStaticData"),
   selectFolder: () => ipcInvoke("selectFolder"),
+  focusWindow: () => ipcInvoke("focusWindow"),
 } satisfies Window["electron"]);
 
 function ipcInvoke<Key extends keyof EventPayloadMapping>(

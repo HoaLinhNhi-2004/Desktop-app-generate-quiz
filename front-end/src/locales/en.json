@@ -706,5 +706,41 @@
     "supportedFormats": "Supports: PDF, DOCX, DOC, TXT, PPTX",
     "starting": "Starting...",
     "startBtn": "Start Import"
+  },
+  "notifications": {
+    "folder": {
+      "created": "Folder created",
+      "createdDesc": "\"{{name}}\" has been added.",
+      "createFailed": "Failed to create folder",
+      "updated": "Folder updated",
+      "updateFailed": "Failed to update folder",
+      "deleted": "Folder deleted",
+      "deleteFailed": "Failed to delete folder",
+      "favoriteAdded": "Added to favorites",
+      "favoriteRemoved": "Removed from favorites",
+      "favoriteFailed": "Failed to update favorite",
+      "processingDone": "Document processing complete",
+      "processingDoneDesc": "All materials are ready for RAG."
+    },
+    "quiz": {
+      "generated": "Quiz generated",
+      "generatedDesc": "Created {{count}} questions.",
+      "imported": "Quiz imported",
+      "importedDesc": "Imported {{count}} questions.",
+      "generateFailed": "Quiz generation failed"
+    },
+    "upload": {
+      "reprocessStarted": "Reprocessing material",
+      "reprocessFailed": "Failed to reprocess material"
+    },
+    "stats": {
+      "saveFailed": "Failed to save attempt"
+    },
+    "smartImport": {
+      "completed": "Folder import complete",
+      "completedDesc": "Imported {{imported}} files into {{folders}} folders.",
+      "failed": "Folder import failed",
+      "cancelled": "Folder import cancelled"
+    }
   }
 }

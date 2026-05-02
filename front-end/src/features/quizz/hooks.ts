@@ -1,4 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 import {
   generateQuizApi,
   extractTextApi,
@@ -13,6 +15,7 @@ import type {
   ExtractTextOptions,
 } from "./api";
 import type { QuizConfig, QuizSetSummary, QuizSetDetail } from "./types";
+import { notifyJobDone } from "@/lib/notify";
 
 interface GenerateQuizInput {
   options: GenerateQuizOptions;
@@ -23,8 +26,26 @@ interface GenerateQuizInput {
  * Hook to generate quiz from any input source (files / youtube / text)
  */
 export function useGenerateQuiz() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
   return useMutation<GenerateQuizResponse, Error, GenerateQuizInput>({
     mutationFn: ({ options, config }) => generateQuizApi(options, config),
+    onSuccess: (data, variables) => {
+      const count = data.questions.length;
+      const isImport = variables.options.action === "import";
+      const folderId = variables.options.folderId;
+      notifyJobDone(
+        isImport
+          ? t("notifications.quiz.imported")
+          : t("notifications.quiz.generated"),
+        {
+          description: isImport
+            ? t("notifications.quiz.importedDesc", { count })
+            : t("notifications.quiz.generatedDesc", { count }),
+          onClick: folderId ? () => navigate(`/folder/${folderId}`) : undefined,
+        },
+      );
+    },
     onError: (error: Error) => {
       console.error("Quiz generation failed:", error.message);
     },

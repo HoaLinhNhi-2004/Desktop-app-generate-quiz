@@ -706,5 +706,41 @@
     "supportedFormats": "Hỗ trợ: PDF, DOCX, DOC, TXT, PPTX",
     "starting": "Đang bắt đầu...",
     "startBtn": "Bắt đầu nhập"
+  },
+  "notifications": {
+    "folder": {
+      "created": "Đã tạo thư mục",
+      "createdDesc": "\"{{name}}\" đã được thêm.",
+      "createFailed": "Không tạo được thư mục",
+      "updated": "Đã cập nhật thư mục",
+      "updateFailed": "Không cập nhật được thư mục",
+      "deleted": "Đã xoá thư mục",
+      "deleteFailed": "Không xoá được thư mục",
+      "favoriteAdded": "Đã thêm vào yêu thích",
+      "favoriteRemoved": "Đã bỏ khỏi yêu thích",
+      "favoriteFailed": "Không cập nhật được yêu thích",
+      "processingDone": "Xử lý tài liệu hoàn tất",
+      "processingDoneDesc": "Tất cả tài liệu đã sẵn sàng cho RAG."
+    },
+    "quiz": {
+      "generated": "Đã tạo quiz",
+      "generatedDesc": "Sinh xong {{count}} câu hỏi.",
+      "imported": "Đã nhập quiz",
+      "importedDesc": "Đã nhập {{count}} câu hỏi.",
+      "generateFailed": "Tạo quiz thất bại"
+    },
+    "upload": {
+      "reprocessStarted": "Đang xử lý lại tài liệu",
+      "reprocessFailed": "Không thể xử lý lại tài liệu"
+    },
+    "stats": {
+      "saveFailed": "Không lưu được kết quả làm bài"
+    },
+    "smartImport": {
+      "completed": "Nhập thư mục hoàn tất",
+      "completedDesc": "Đã nhập {{imported}} file vào {{folders}} thư mục.",
+      "failed": "Nhập thư mục thất bại",
+      "cancelled": "Đã huỷ nhập thư mục"
+    }
   }
 }

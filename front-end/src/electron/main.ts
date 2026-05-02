@@ -43,6 +43,11 @@ function buildContentSecurityPolicy(): string {
 }
 
 app.on("ready", async () => {
+  if (process.platform === "win32") {
+    // Required so OS toast notifications show the app's name + icon instead of "electron.exe".
+    app.setAppUserModelId("com.hoanglong.web-quizz");
+  }
+
   if (!isDev()) {
     backendProcess = await startBackend();
     if (!backendProcess) {
@@ -94,6 +99,13 @@ app.on("ready", async () => {
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
+  });
+
+  // Focus + restore the main window — invoked when the user clicks an OS notification.
+  ipcMainHandle("focusWindow", () => {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
   });
 
   // DevTools, reload, hard reload shortcuts

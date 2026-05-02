@@ -1,4 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 import type { ImportJob } from "./types";
 import {
   startSmartImportApi,
@@ -7,15 +9,20 @@ import {
   resumeImportApi,
   cancelImportApi,
 } from "./api";
+import { notifyJobDone, notifyJobFailed, notifyInfo } from "@/lib/notify";
 
 const POLL_INTERVAL = 1500;
+type TerminalStatus = "completed" | "error" | "cancelled";
 
 export function useSmartImport() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
   const [job, setJob] = useState<ImportJob | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const notifiedJobIdRef = useRef<string | null>(null); // tracks last job id we notified about
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -23,6 +30,31 @@ export function useSmartImport() {
       pollRef.current = null;
     }
   }, []);
+
+  const notifyTerminal = useCallback(
+    (progress: ImportJob, status: TerminalStatus) => {
+      if (notifiedJobIdRef.current === progress.id) return;
+      notifiedJobIdRef.current = progress.id;
+      const goHome = () => navigate("/");
+      if (status === "completed") {
+        notifyJobDone(t("notifications.smartImport.completed"), {
+          description: t("notifications.smartImport.completedDesc", {
+            imported: progress.completed,
+            folders: progress.createdFolders.length,
+          }),
+          onClick: goHome,
+        });
+      } else if (status === "error") {
+        notifyJobFailed(t("notifications.smartImport.failed"), {
+          description: progress.error ?? undefined,
+          onClick: goHome,
+        });
+      } else {
+        notifyInfo(t("notifications.smartImport.cancelled"));
+      }
+    },
+    [t, navigate],
+  );
 
   const refetchOnce = useCallback(async (jobId: string) => {
     try {
@@ -46,13 +78,14 @@ export function useSmartImport() {
             progress.status === "cancelled"
           ) {
             stopPolling();
+            notifyTerminal(progress, progress.status);
           }
         } catch {
           // Silently ignore polling errors
         }
       }, POLL_INTERVAL);
     },
-    [stopPolling],
+    [stopPolling, notifyTerminal],
   );
 
   const startImport = useCallback(
@@ -60,6 +93,7 @@ export function useSmartImport() {
       setIsStarting(true);
       setError(null);
       setJob(null);
+      notifiedJobIdRef.current = null;
       try {
         const { jobId } = await startSmartImportApi(dirPath);
         const initial = await getImportProgressApi(jobId);

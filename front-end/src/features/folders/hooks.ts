@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import type { Folder } from "./types";
 import {
   getFoldersApi,
@@ -8,16 +9,23 @@ import {
   toggleFavoriteApi,
   recordAccessApi,
 } from "./api";
+import {
+  notifySuccess,
+  notifyError,
+  notifyJobDone,
+} from "@/lib/notify";
 
 const PROCESSING_POLL_INTERVAL = 5000; // ms — poll interval when files are processing
 const FORCE_POLL_DURATION = 30_000;    // ms — keep polling after refresh to catch background processing
 
 export function useFolders() {
+  const { t } = useTranslation();
   const [folders, setFolders] = useState<Folder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const processingPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const forcePollUntilRef = useRef<number>(0); // timestamp until which forced polling continues
+  const prevProcessingTotalRef = useRef<number>(0); // tracks processing total to detect 0 transition
 
   const loadFolders = useCallback(async () => {
     try {
@@ -50,9 +58,21 @@ export function useFolders() {
 
   // Auto-poll when any folder has files being processed OR during forced polling window
   useEffect(() => {
-    const hasProcessing = folders.some((f) => (f.processingCount ?? 0) > 0);
+    const totalProcessing = folders.reduce(
+      (sum, f) => sum + (f.processingCount ?? 0),
+      0,
+    );
+    const hasProcessing = totalProcessing > 0;
     const isForcePolling = Date.now() < forcePollUntilRef.current;
     const shouldPoll = hasProcessing || isForcePolling;
+
+    // Detect transition from "had processing" → "all done" and notify once
+    if (prevProcessingTotalRef.current > 0 && totalProcessing === 0) {
+      notifyJobDone(t("notifications.folder.processingDone"), {
+        description: t("notifications.folder.processingDoneDesc"),
+      });
+    }
+    prevProcessingTotalRef.current = totalProcessing;
 
     if (shouldPoll && !processingPollRef.current) {
       processingPollRef.current = setInterval(async () => {
@@ -83,7 +103,7 @@ export function useFolders() {
         processingPollRef.current = null;
       }
     };
-  }, [folders]);
+  }, [folders, t]);
 
 
   const createFolder = useCallback(
@@ -91,24 +111,35 @@ export function useFolders() {
       try {
         const newFolder = await createFolderApi(name, description, color);
         setFolders((prev) => [...prev, newFolder]);
+        notifySuccess(t("notifications.folder.created"), {
+          description: t("notifications.folder.createdDesc", { name: newFolder.name }),
+        });
         return newFolder;
       } catch (err) {
-        console.error("Failed to create folder", err);
+        notifyError(t("notifications.folder.createFailed"), {
+          description: err instanceof Error ? err.message : undefined,
+        });
         throw err;
       }
     },
-    [],
+    [t],
   );
 
-  const deleteFolder = useCallback(async (id: string) => {
-    try {
-      await deleteFolderApi(id);
-      setFolders((prev) => prev.filter((f) => f.id !== id));
-    } catch (err) {
-      console.error("Failed to delete folder", err);
-      throw err;
-    }
-  }, []);
+  const deleteFolder = useCallback(
+    async (id: string) => {
+      try {
+        await deleteFolderApi(id);
+        setFolders((prev) => prev.filter((f) => f.id !== id));
+        notifySuccess(t("notifications.folder.deleted"));
+      } catch (err) {
+        notifyError(t("notifications.folder.deleteFailed"), {
+          description: err instanceof Error ? err.message : undefined,
+        });
+        throw err;
+      }
+    },
+    [t],
+  );
 
   const updateFolder = useCallback(
     async (
@@ -120,24 +151,37 @@ export function useFolders() {
         setFolders((prev) =>
           prev.map((f) => (f.id === id ? updatedFolder : f)),
         );
+        notifySuccess(t("notifications.folder.updated"));
         return updatedFolder;
       } catch (err) {
-        console.error("Failed to update folder", err);
+        notifyError(t("notifications.folder.updateFailed"), {
+          description: err instanceof Error ? err.message : undefined,
+        });
         throw err;
       }
     },
-    [],
+    [t],
   );
 
-  const toggleFavorite = useCallback(async (id: string) => {
-    try {
-      const updatedFolder = await toggleFavoriteApi(id);
-      setFolders((prev) => prev.map((f) => (f.id === id ? updatedFolder : f)));
-    } catch (err) {
-      console.error("Failed to toggle favorite", err);
-      throw err;
-    }
-  }, []);
+  const toggleFavorite = useCallback(
+    async (id: string) => {
+      try {
+        const updatedFolder = await toggleFavoriteApi(id);
+        setFolders((prev) => prev.map((f) => (f.id === id ? updatedFolder : f)));
+        notifySuccess(
+          updatedFolder.isFavorite
+            ? t("notifications.folder.favoriteAdded")
+            : t("notifications.folder.favoriteRemoved"),
+        );
+      } catch (err) {
+        notifyError(t("notifications.folder.favoriteFailed"), {
+          description: err instanceof Error ? err.message : undefined,
+        });
+        throw err;
+      }
+    },
+    [t],
+  );
 
   const recordAccess = useCallback(async (id: string) => {
     try {
