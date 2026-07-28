@@ -8,12 +8,22 @@ electron.contextBridge.exposeInMainWorld("electron", {
   getStaticData: () => ipcInvoke("getStaticData"),
   selectFolder: () => ipcInvoke("selectFolder"),
   focusWindow: () => ipcInvoke("focusWindow"),
+  setNativeTheme: (theme) => ipcInvokeWithArg("setNativeTheme", theme),
 } satisfies Window["electron"]);
 
 function ipcInvoke<Key extends keyof EventPayloadMapping>(
   key: Key,
 ): Promise<EventPayloadMapping[Key]> {
   return electron.ipcRenderer.invoke(key);
+}
+
+function ipcInvokeWithArg<
+  Key extends keyof EventRequestMapping & keyof EventPayloadMapping,
+>(
+  key: Key,
+  payload: EventRequestMapping[Key],
+): Promise<EventPayloadMapping[Key]> {
+  return electron.ipcRenderer.invoke(key, payload);
 }
 
 function ipcOn<Key extends keyof EventPayloadMapping>(

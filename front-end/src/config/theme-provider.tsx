@@ -52,6 +52,11 @@ export function ThemeProvider({
     root.classList.add(resolvedTheme);
   }, [resolvedTheme]);
 
+  // Keep the Electron native title bar in the same mode as the app.
+  useEffect(() => {
+    void window.electron?.setNativeTheme?.(theme).catch(() => {});
+  }, [theme]);
+
   useEffect(() => {
     if (theme !== "system") return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");

@@ -1,6 +1,14 @@
-import { app, BrowserWindow, dialog, globalShortcut, Menu, session } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  globalShortcut,
+  Menu,
+  nativeTheme,
+  session,
+} from "electron";
 import path from "node:path";
-import { ipcMainHandle, isDev } from "./util.js";
+import { ipcMainHandle, ipcMainHandleWithArg, isDev } from "./util.js";
 import { getStationData, pollResource } from "./resourceManager.js";
 import { getAssetsPath, getPreloadPath, getUIPath } from "./pathResolver.js";
 import { killBackend, startBackend } from "./backendManager.js";
@@ -42,6 +50,16 @@ function buildContentSecurityPolicy(): string {
   ].join("; ");
 }
 
+// Matches --background in src/ui/index.css for the .light / .dark roots, so the
+// native frame and the pre-paint window fill stay in step with the React theme.
+const WINDOW_BACKGROUND = { light: "#ffffff", dark: "#0a0a0a" } as const;
+
+function currentBackgroundColor(): string {
+  return nativeTheme.shouldUseDarkColors
+    ? WINDOW_BACKGROUND.dark
+    : WINDOW_BACKGROUND.light;
+}
+
 app.on("ready", async () => {
   if (process.platform === "win32") {
     // Required so OS toast notifications show the app's name + icon instead of "electron.exe".
@@ -71,6 +89,7 @@ app.on("ready", async () => {
     title: "Generate Quiz",
     icon: path.join(getAssetsPath(), "trayIcon.png"),
     autoHideMenuBar: true,
+    backgroundColor: currentBackgroundColor(),
     webPreferences: {
       preload: getPreloadPath(),
       contextIsolation: true,
@@ -99,6 +118,17 @@ app.on("ready", async () => {
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
+  });
+
+  // The renderer owns the theme (localStorage `quizgen-theme`); mirror it onto
+  // nativeTheme so Windows repaints the title bar light/dark to match.
+  ipcMainHandleWithArg("setNativeTheme", (theme) => {
+    nativeTheme.themeSource = theme;
+    mainWindow.setBackgroundColor(currentBackgroundColor());
+  });
+
+  nativeTheme.on("updated", () => {
+    mainWindow.setBackgroundColor(currentBackgroundColor());
   });
 
   // Focus + restore the main window — invoked when the user clicks an OS notification.

@@ -16,6 +16,20 @@ export function ipcMainHandle<Key extends keyof EventPayloadMapping>(
   });
 }
 
+export function ipcMainHandleWithArg<
+  Key extends keyof EventRequestMapping & keyof EventPayloadMapping,
+>(
+  key: Key,
+  handler: (
+    payload: EventRequestMapping[Key],
+  ) => EventPayloadMapping[Key] | Promise<EventPayloadMapping[Key]>,
+) {
+  ipcMain.handle(key, (event, payload: EventRequestMapping[Key]) => {
+    validateEventFrame(event.senderFrame!);
+    return handler(payload);
+  });
+}
+
 export function ipcWebContentsSend<Key extends keyof EventPayloadMapping>(
   key: Key,
   webContents: Electron.WebContents,
