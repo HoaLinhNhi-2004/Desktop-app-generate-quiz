@@ -15,6 +15,7 @@ from flask import Blueprint, request, jsonify, current_app
 from werkzeug.utils import secure_filename
 from app.db import db
 from app.features.upload.models import UploadedFileRecord
+from app.utils import event_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +28,70 @@ def _upload_allowed(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-def _process_in_background(app, record_id: str):
-    """Run document processing (extract → chunk → embed → store) in a background thread."""
+# One worker thread per folder, draining a FIFO queue.
+#
+# Records are processed one at a time — the same reason smart_import_service
+# does it: concurrent ChromaDB init is fragile, parallel Gemini Vision OCR calls
+# burn the shared key pool's RPM with no coordination, and serialising keeps the
+# progress stream deterministic. Uploading again while a batch is running
+# appends to the queue instead of racing it.
+_queues: dict[str, list[str]] = {}
+_workers: set[str] = set()
+_queue_lock = threading.Lock()
+
+
+def _drain_queue(app, folder_id: str):
     with app.app_context():
-        try:
-            from app.features.upload.document_processor import process_record
-            process_record(record_id)
-        except Exception as e:
-            logger.error("Background processing failed for %s: %s", record_id, e)
+        emit = event_jobs.emitter(folder_id)
+        from app.features.upload.document_processor import process_record
+
+        while True:
+            with _queue_lock:
+                queue = _queues.get(folder_id) or []
+                if not queue:
+                    # Finish inside the lock so a concurrent _start_processing
+                    # either enqueues before this (and we keep going) or after
+                    # (and it creates a fresh job plus a new worker).
+                    _workers.discard(folder_id)
+                    _queues.pop(folder_id, None)
+                    event_jobs.finish_job(folder_id, "done")
+                    return
+                record_id = queue.pop(0)
+
+            try:
+                process_record(record_id, emit)
+            except Exception as e:
+                logger.error("Background processing failed for %s: %s", record_id, e)
+                emit("error", {"recordId": record_id, "message": str(e)[:500]})
+
+
+def _start_processing(folder_id: str, record_ids: list[str]) -> None:
+    """Queue records for processing, starting the folder's worker if idle."""
+    if not folder_id or not record_ids:
+        return
+    app = current_app._get_current_object()
+
+    with _queue_lock:
+        # (Re)opening the job inside the lock keeps it from being closed by a
+        # worker that is finishing at this exact moment.
+        event_jobs.create_job(
+            folder_id, reuse_running=True, kind="documentProcess", folderId=folder_id
+        )
+        queue = _queues.setdefault(folder_id, [])
+        first_position = len(queue) + (1 if folder_id in _workers else 0)
+        queue.extend(record_ids)
+        needs_worker = folder_id not in _workers
+        if needs_worker:
+            _workers.add(folder_id)
+
+    emit = event_jobs.emitter(folder_id)
+    for offset, record_id in enumerate(record_ids):
+        position = first_position + offset
+        if position > 0:
+            emit("stage", {"recordId": record_id, "stage": "queued", "current": position})
+
+    if needs_worker:
+        threading.Thread(target=_drain_queue, args=(app, folder_id), daemon=True).start()
 
 
 @upload_bp.route("/upload", methods=["POST"])
@@ -142,15 +199,9 @@ def upload_materials():
     db.session.commit()
     logger.info("Uploaded %d material(s) to folder %s", len(created_records), folder_id)
 
-    # Trigger document processing in background for each record
-    app = current_app._get_current_object()
-    for rec in created_records:
-        t = threading.Thread(
-            target=_process_in_background,
-            args=(app, rec["id"]),
-            daemon=True,
-        )
-        t.start()
+    # Job is created here, in the request thread, so a client subscribing right
+    # after the 201 always finds it.
+    _start_processing(folder_id, [rec["id"] for rec in created_records])
 
     return jsonify({"records": created_records}), 201
 
@@ -190,15 +241,27 @@ def reprocess_upload(record_id):
     record.chunk_count = 0
     db.session.commit()
 
-    app = current_app._get_current_object()
-    t = threading.Thread(
-        target=_process_in_background,
-        args=(app, record_id),
-        daemon=True,
-    )
-    t.start()
+    _start_processing(record.folder_id, [record_id])
 
     return jsonify(record.to_dict()), 200
+
+
+@upload_bp.route("/stream/<folder_id>", methods=["GET"])
+def folder_processing_stream(folder_id):
+    """
+    SSE progress for every record processing in this folder. Resume with
+    ?from=<lastEventId>.
+
+    One multiplexed stream per folder rather than one per record: browsers cap
+    concurrent connections per origin at 6, and per-record streams would starve
+    the polling that acts as this feature's fallback.
+
+    404 when no job exists (e.g. after a backend restart) — clients fall back to
+    polling processingStatus.
+    """
+    if not event_jobs.job_exists(folder_id):
+        return jsonify({"error": "No processing job for this folder"}), 404
+    return event_jobs.sse_response(folder_id, event_jobs.cursor_from_request())
 
 
 @upload_bp.route("/<record_id>/file", methods=["GET"])

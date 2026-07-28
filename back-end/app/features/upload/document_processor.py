@@ -27,32 +27,45 @@ RAG_CHUNK_SIZE = 1000
 RAG_CHUNK_OVERLAP = 200
 
 
-def process_record(record_id: str) -> None:
+def _noop(event_type: str, data: dict) -> None:
+    pass
+
+
+def process_record(record_id: str, emit=_noop) -> None:
     """
     Main processing pipeline for an uploaded file record.
     Updates the record's processing_status in the database.
+
+    emit(event_type, data): optional progress callback. Every event carries the
+    recordId so one folder-wide stream can multiplex several records.
     """
     record = UploadedFileRecord.query.get(record_id)
     if not record:
         logger.error("Record not found: %s", record_id)
         return
 
+    def _emit(event_type: str, data: dict) -> None:
+        emit(event_type, {"recordId": record_id, **data})
+
     try:
         record.processing_status = "processing"
         db.session.commit()
 
         # Step 1: Extract text
-        text = _extract_text(record)
+        _emit("stage", {"stage": "extracting"})
+        text = _extract_text(record, _emit)
 
         if not text or not text.strip():
             record.processing_status = "failed"
             record.processing_error = "Không trích xuất được văn bản nào"
             db.session.commit()
+            _emit("error", {"message": record.processing_error})
             return
 
         # Step 2: Filter boilerplate, clean, and chunk
         from app.features.quizz.text_processing import filter_boilerplate, clean_text, chunk_text
 
+        _emit("stage", {"stage": "chunking"})
         filtered = filter_boilerplate(text)
         cleaned = clean_text(filtered)
         chunks = chunk_text(cleaned, max_chunk_size=RAG_CHUNK_SIZE, overlap=RAG_CHUNK_OVERLAP)
@@ -60,6 +73,7 @@ def process_record(record_id: str) -> None:
         # Step 3: Store in vector DB
         from app.features.upload.vector_store import store_chunks
 
+        _emit("stage", {"stage": "embedding", "total": len(chunks)})
         count = store_chunks(
             record_id=record.id,
             folder_id=record.folder_id,
@@ -76,6 +90,7 @@ def process_record(record_id: str) -> None:
             "Processed record %s: %d chunks from '%s'",
             record_id, count, record.original_name,
         )
+        _emit("done", {"chunkCount": count})
 
     except Exception as e:
         logger.error("Processing failed for record %s: %s", record_id, e, exc_info=True)
@@ -85,19 +100,20 @@ def process_record(record_id: str) -> None:
             db.session.commit()
         except Exception:
             pass
+        _emit("error", {"message": str(e)[:500]})
 
 
 # ── Text extraction by file type ──────────────────────────────────────────────
 
 
-def _extract_text(record: UploadedFileRecord) -> str:
+def _extract_text(record: UploadedFileRecord, emit=_noop) -> str:
     """Route to the appropriate extractor based on input mode / file type."""
     if record.input_mode == "text":
         return _extract_text_mode(record)
     elif record.input_mode == "youtube":
         return _extract_youtube(record)
     elif record.input_mode == "files":
-        return _extract_file(record)
+        return _extract_file(record, emit)
     else:
         raise ValueError(f"Unknown input mode: {record.input_mode}")
 
@@ -117,14 +133,14 @@ def _extract_youtube(record: UploadedFileRecord) -> str:
     return extract_transcript(url)
 
 
-def _extract_file(record: UploadedFileRecord) -> str:
+def _extract_file(record: UploadedFileRecord, emit=_noop) -> str:
     if not record.stored_path or not os.path.isfile(record.stored_path):
         raise FileNotFoundError(f"File not found: {record.stored_path}")
 
     ext = (record.file_type or "").lower().strip(".")
 
     if ext == "pdf":
-        return _extract_pdf(record.stored_path)
+        return _extract_pdf(record.stored_path, emit)
     elif ext in ("docx", "doc"):
         from app.features.quizz.docx_service import extract_text_from_docx
         return extract_text_from_docx(record.stored_path)
@@ -138,11 +154,15 @@ def _extract_file(record: UploadedFileRecord) -> str:
         raise ValueError(f"Unsupported file type: {ext}")
 
 
-def _extract_pdf(file_path: str) -> str:
+def _extract_pdf(file_path: str, emit=_noop) -> str:
     """
     Smart PDF extraction:
       - Has text layer (pdfplumber yields >50 chars): direct text extraction
       - Scanned / image PDF: Gemini OCR via vision API
+
+    A scanned PDF runs the whole pdfplumber pass first, so progress reports
+    "extracting 1..N" and only then "ocr 1..N" — two sequential stages, not one
+    bar going backwards.
     """
     import pdfplumber
 
@@ -151,10 +171,16 @@ def _extract_pdf(file_path: str) -> str:
 
     try:
         with pdfplumber.open(file_path) as pdf:
-            for page in pdf.pages:
+            total_pages = len(pdf.pages)
+            for index, page in enumerate(pdf.pages):
                 page_text = page.extract_text() or ""
                 text_parts.append(page_text.strip())
                 total_chars += len(page_text.strip())
+                emit("stage", {
+                    "stage": "extracting",
+                    "current": index + 1,
+                    "total": total_pages,
+                })
     except Exception as e:
         logger.warning("pdfplumber failed for %s: %s", file_path, e)
         total_chars = 0
@@ -166,10 +192,10 @@ def _extract_pdf(file_path: str) -> str:
 
     # Scanned PDF → Gemini OCR page by page
     logger.info("PDF appears scanned (%d chars), using Gemini OCR", total_chars)
-    return _ocr_pdf(file_path)
+    return _ocr_pdf(file_path, emit)
 
 
-def _ocr_pdf(file_path: str) -> str:
+def _ocr_pdf(file_path: str, emit=_noop) -> str:
     """Convert PDF pages to images and run Gemini OCR on each."""
     import tempfile
     from pdf2image import convert_from_path
@@ -185,11 +211,13 @@ def _ocr_pdf(file_path: str) -> str:
             kwargs["poppler_path"] = poppler_path
 
         images = convert_from_path(file_path, **kwargs)
+        emit("stage", {"stage": "ocr", "current": 0, "total": len(images)})
         for i, img in enumerate(images):
             img_path = os.path.join(tmpdir, f"page_{i}.png")
             img.save(img_path, "PNG")
             text = extract_text_from_image(img_path)
             if text.strip():
                 all_texts.append(text.strip())
+            emit("stage", {"stage": "ocr", "current": i + 1, "total": len(images)})
 
     return "\n\n".join(all_texts)

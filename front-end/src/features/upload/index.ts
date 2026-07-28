@@ -8,8 +8,12 @@ export {
   uploadMaterialsApi,
   reprocessUploadApi,
   getUploadsByIdsApi,
+  subscribeFolderProcessingApi,
 } from "./api";
-export type { UploadMaterialsOptions } from "./api";
+export type {
+  UploadMaterialsOptions,
+  UploadProcessingHandlers,
+} from "./api";
 export {
   useUploadRecords,
   useDeleteUploadRecord,
@@ -17,4 +21,5 @@ export {
   useUploadMaterials,
   useReprocessUpload,
   useUploadsByIds,
+  useUploadProcessingStream,
 } from "./hooks";

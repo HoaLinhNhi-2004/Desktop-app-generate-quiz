@@ -33,13 +33,19 @@ import {
   FileSpreadsheet,
   RefreshCw,
 } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
 import {
   useUploadRecords,
   useDeleteUploadRecord,
   useUploadMaterials,
   useReprocessUpload,
+  useUploadProcessingStream,
 } from "@/features/upload";
-import type { UploadRecord } from "@/features/upload";
+import type {
+  UploadRecord,
+  UploadProcessingProgress,
+  UploadProcessingStage,
+} from "@/features/upload";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -114,7 +120,51 @@ function getInputModeBadge(mode: string) {
   );
 }
 
-function getProcessingBadge(record: UploadRecord) {
+// Coarse weights so the bar advances monotonically through the pipeline; the
+// backend only reports the stage plus its own page/chunk counter.
+const STAGE_WEIGHTS: Record<UploadProcessingStage, [number, number]> = {
+  queued: [0, 0],
+  extracting: [5, 40],
+  ocr: [40, 75],
+  chunking: [75, 85],
+  embedding: [85, 98],
+};
+
+function progressPercent(progress: UploadProcessingProgress): number {
+  const [from, to] = STAGE_WEIGHTS[progress.stage];
+  if (!progress.total || progress.total <= 0) return from;
+  const ratio = Math.min(1, (progress.current ?? 0) / progress.total);
+  return from + (to - from) * ratio;
+}
+
+function stageLabel(progress: UploadProcessingProgress): string {
+  if (progress.stage === "ocr" && progress.total) {
+    return i18n.t("materials.stream.ocr", {
+      current: progress.current ?? 0,
+      total: progress.total,
+    });
+  }
+  return i18n.t(`materials.stream.${progress.stage}`);
+}
+
+function getProcessingBadge(
+  record: UploadRecord,
+  progress?: UploadProcessingProgress,
+) {
+  if (
+    progress &&
+    (record.processingStatus === "processing" ||
+      record.processingStatus === "pending")
+  ) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[10px] text-blue-500">
+        <Loader2 className="size-3 animate-spin" />
+        {stageLabel(progress)}
+        <Progress value={progressPercent(progress)} className="h-1 w-20" />
+      </span>
+    );
+  }
+
   switch (record.processingStatus) {
     case "processing":
       return (
@@ -519,6 +569,11 @@ function MaterialsList({ folderId }: { folderId: string }) {
   const { data: records, isLoading } = useUploadRecords(folderId);
   const deleteRecord = useDeleteUploadRecord();
   const reprocess = useReprocessUpload();
+  const hasActive = !!records?.some(
+    (r) =>
+      r.processingStatus === "pending" || r.processingStatus === "processing",
+  );
+  const liveProgress = useUploadProcessingStream(folderId, hasActive);
 
   const handleDelete = (record: UploadRecord) => {
     deleteRecord.mutate(record.id, {
@@ -611,7 +666,7 @@ function MaterialsList({ folderId }: { folderId: string }) {
                     · {t("materials.fileNotOnServer")}
                   </span>
                 )}
-                {getProcessingBadge(record)}
+                {getProcessingBadge(record, liveProgress[record.id])}
               </div>
             </div>
             {record.processingStatus === "failed" && (

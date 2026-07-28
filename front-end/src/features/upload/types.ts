@@ -15,6 +15,53 @@ export interface YouTubeInput {
 }
 
 /** A record of a previously uploaded file stored in the DB */
+// ─── Streaming document processing ──────────────────────────────────────────
+
+export type UploadProcessingStage =
+  | "queued"
+  | "extracting"
+  | "ocr"
+  | "chunking"
+  | "embedding";
+
+export interface UploadProcessingProgress {
+  recordId: string;
+  stage: UploadProcessingStage;
+  current?: number;
+  total?: number;
+}
+
+export interface UploadProcessingStageEvent extends UploadProcessingProgress {
+  type: "stage";
+}
+
+export interface UploadProcessingDoneEvent {
+  type: "done";
+  recordId: string;
+  chunkCount: number;
+}
+
+export interface UploadProcessingErrorEvent {
+  type: "error";
+  recordId: string;
+  message: string;
+}
+
+export interface UploadProcessingPingEvent {
+  type: "ping";
+}
+
+export interface UploadProcessingResyncEvent {
+  type: "resync";
+}
+
+export type UploadProcessingEvent =
+  | UploadProcessingStageEvent
+  | UploadProcessingDoneEvent
+  | UploadProcessingErrorEvent
+  | UploadProcessingPingEvent
+  | UploadProcessingResyncEvent;
+
 export interface UploadRecord {
   id: string;
   folderId: string;

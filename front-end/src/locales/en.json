@@ -325,7 +325,14 @@
     "duplicateText": "This text was already added",
     "uploadedMaterials": "Uploaded Materials",
     "chooseForQuiz": "Select materials in 'Create Quiz' tab to generate questions",
-    "text": "Text"
+    "text": "Text",
+    "stream": {
+      "queued": "Queued",
+      "extracting": "Extracting text",
+      "ocr": "OCR page {{current}}/{{total}}",
+      "chunking": "Chunking",
+      "embedding": "Embedding"
+    }
   },
   "materialSelect": {
     "title": "Select 1 material",

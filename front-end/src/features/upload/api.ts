@@ -1,5 +1,6 @@
 import { APP_CONFIG } from "@/config/app";
-import type { UploadRecord } from "./types";
+import { openEventStream } from "@/lib/sse";
+import type { UploadRecord, UploadProcessingEvent } from "./types";
 
 const API_URL = APP_CONFIG.API_URL;
 
@@ -132,4 +133,35 @@ export async function uploadMaterialsApi(
 
   const data = await response.json();
   return data.records;
+}
+
+export interface UploadProcessingHandlers {
+  onEvent: (event: UploadProcessingEvent) => void;
+  onStreamError: (message: string) => void;
+}
+
+/**
+ * GET /api/uploads/stream/<folderId> — live processing progress for every
+ * record in the folder, multiplexed onto one connection.
+ *
+ * One stream per folder rather than per record: browsers allow only ~6
+ * concurrent connections per origin, and per-record streams would starve the
+ * polling that backs this up.
+ *
+ * Returns an unsubscribe function.
+ */
+export function subscribeFolderProcessingApi(
+  folderId: string,
+  handlers: UploadProcessingHandlers,
+  cursor?: number,
+): () => void {
+  const params = cursor ? `?from=${cursor}` : "";
+  const url = `${API_URL}/api/uploads/stream/${encodeURIComponent(folderId)}${params}`;
+
+  const stream = openEventStream<UploadProcessingEvent>(url, {
+    onMessage: handlers.onEvent,
+    onGiveUp: handlers.onStreamError,
+  });
+
+  return stream.close;
 }

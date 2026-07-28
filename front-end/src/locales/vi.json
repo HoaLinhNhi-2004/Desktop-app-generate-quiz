@@ -325,7 +325,14 @@
     "duplicateText": "Văn bản này đã được thêm trước đó",
     "uploadedMaterials": "Tài liệu đã tải lên",
     "chooseForQuiz": "Chọn tài liệu ở tab 'Tạo Quiz' để tạo câu hỏi",
-    "text": "Văn bản"
+    "text": "Văn bản",
+    "stream": {
+      "queued": "Chờ xử lý",
+      "extracting": "Đang trích xuất văn bản",
+      "ocr": "OCR trang {{current}}/{{total}}",
+      "chunking": "Đang chia đoạn",
+      "embedding": "Đang vector hoá"
+    }
   },
   "materialSelect": {
     "title": "Chọn 1 tài liệu",
