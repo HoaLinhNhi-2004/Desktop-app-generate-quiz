@@ -68,30 +68,13 @@
       "subtitle": "Customize the quiz to your needs"
     },
     "generating": "Generating quiz...",
-    "generatingWait": "Please wait, do not close this window.",
     "createQuizBtn": "Create Quiz",
     "noMaterialSelected": "No material selected",
     "noMaterialSelectedDesc": "Please select at least one uploaded material to create a quiz.",
     "noMaterialSelectedPdf": "No PDF file",
     "noMaterialSelectedPdfDesc": "This quiz has no source PDF file to display. Source viewing is only supported for quizzes created from PDF files.",
-    "steps": {
-      "upload": "Uploading files to server",
-      "uploadDesc": "Receiving data...",
-      "extract": "Extracting text",
-      "extractDesc": "OCR / PDF / DOCX processing...",
-      "analyze": "Analyzing content",
-      "analyzeDesc": "Cleaning and selecting important passages...",
-      "aiGenerate": "AI generating questions",
-      "aiGenerateDesc": "Gemini is composing questions...",
-      "ytTranscript": "Loading YouTube transcript",
-      "ytTranscriptDesc": "Fetching subtitles...",
-      "ytSummarize": "AI summarizing transcript",
-      "ytSummarizeDesc": "Gemini is processing...",
-      "ytQuiz": "Composing questions from video content...",
-      "textAnalyze": "Analyzing text",
-      "textAnalyzeDesc": "Cleaning...",
-      "textQuiz": "Gemini is composing questions..."
-    }
+    "streamRunning": "Generating quiz…",
+    "streamRunningHint": "View progress"
   },
   "errors": {
     "allModelsExhausted": {
@@ -184,7 +167,39 @@
     "questionList": "Question List",
     "viewing": "Viewing",
     "answeredStatus": "Answered",
-    "unanswered": "Unanswered"
+    "unanswered": "Unanswered",
+    "stream": {
+      "generating": "Generating… {{loaded}}/{{total}}",
+      "waitingNext": "Generating next…",
+      "pendingSlot": "Question {{n}} — generating",
+      "pendingLegend": "Generating",
+      "preparing": "Preparing your first question…",
+      "preparingHint": "You can answer as soon as the first question appears.",
+      "ocrPage": "OCR page {{current}}/{{total}}",
+      "rateLimitWait": "Rate limit reached, waiting {{seconds}}s before retrying…",
+      "failedPartial": "Generation failed after {{count}} questions. You can still submit what you have.",
+      "failedEmpty": "Could not generate any questions.",
+      "backToFolder": "Back to folder",
+      "disconnected": "Lost connection to the server. Loaded questions still work.",
+      "stopAndSubmit": "Stop & submit",
+      "stopConfirmTitle": "Stop generating?",
+      "stopConfirmDesc": "Remaining questions will be discarded. You will submit {{count}} loaded questions.",
+      "stopConfirmAction": "Stop & submit",
+      "stages": {
+        "extracting": "Extracting text",
+        "extractingDesc": "Reading PDF / DOCX…",
+        "ocr": "OCR scanned document",
+        "ocrDesc": "Recognising text in images…",
+        "analyzing": "Analyzing content",
+        "analyzingDesc": "Cleaning and selecting key passages…",
+        "generating": "AI generating questions",
+        "generatingDesc": "Gemini is writing questions…",
+        "saving": "Saving",
+        "savingDesc": "Writing the question set to the folder…",
+        "queued": "Queued",
+        "queuedDesc": "Waiting for its turn…"
+      }
+    }
   },
   "quizQuestion": {
     "questionN": "Question {{n}}: ",
@@ -727,7 +742,11 @@
       "generatedDesc": "Created {{count}} questions.",
       "imported": "Quiz imported",
       "importedDesc": "Imported {{count}} questions.",
-      "generateFailed": "Quiz generation failed"
+      "generateFailed": "Quiz generation failed",
+      "streamPartial": "Generation stopped early",
+      "streamPartialDesc": "Only {{count}} of {{total}} questions were created.",
+      "missingAnswers": "Questions without answers",
+      "missingAnswersDesc": "{{count}} question(s) have no correct answer marked. Please set them manually."
     },
     "upload": {
       "reprocessStarted": "Reprocessing material",
@@ -757,7 +776,8 @@
       "progress": "{{answered}} of {{total}} questions answered",
       "scoreAnnounce": "You scored {{score}}%, {{correct}} out of {{total}} correct",
       "answeredCorrect": "Question {{n}} correct",
-      "answeredWrong": "Question {{n}} wrong"
+      "answeredWrong": "Question {{n}} wrong",
+      "questionArrived": "Loaded question {{n}} of {{total}}"
     },
     "settings": {
       "sectionTitle": "Accessibility",

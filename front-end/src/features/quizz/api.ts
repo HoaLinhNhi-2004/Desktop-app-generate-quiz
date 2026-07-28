@@ -1,4 +1,5 @@
 import { APP_CONFIG } from "@/config/app";
+import { openEventStream } from "@/lib/sse";
 import type {
   QuizConfig,
   QuizQuestion,
@@ -7,15 +8,13 @@ import type {
   YouTubeInput,
   QuizSetSummary,
   QuizSetDetail,
+  QuizStreamEvent,
+  TokenUsage,
 } from "./types";
 
 const API_URL = APP_CONFIG.API_URL;
 
-export interface TokenUsage {
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-}
+export type { TokenUsage } from "./types";
 
 export interface GenerateQuizResponse {
   quizSetId: string;
@@ -52,14 +51,10 @@ function _appendConfig(formData: FormData, config: QuizConfig) {
   formData.append("timePerQuestion", String(config.timePerQuestion));
 }
 
-/**
- * POST /api/quiz/generate
- * Supports inputMode: 'files' | 'youtube' | 'text'
- */
-export async function generateQuizApi(
+function _buildGenerateFormData(
   options: GenerateQuizOptions,
   config: QuizConfig,
-): Promise<GenerateQuizResponse> {
+): FormData {
   const {
     inputMode,
     files = [],
@@ -90,9 +85,20 @@ export async function generateQuizApi(
     formData.append("rawText", rawText);
   }
 
+  return formData;
+}
+
+/**
+ * POST /api/quiz/generate — blocking; the whole quiz arrives at once.
+ * Kept as the non-streaming fallback for the same pipeline.
+ */
+export async function generateQuizApi(
+  options: GenerateQuizOptions,
+  config: QuizConfig,
+): Promise<GenerateQuizResponse> {
   const response = await fetch(`${API_URL}/api/quiz/generate`, {
     method: "POST",
-    body: formData,
+    body: _buildGenerateFormData(options, config),
   });
 
   if (!response.ok) {
@@ -103,6 +109,69 @@ export async function generateQuizApi(
   }
 
   return response.json();
+}
+
+export interface StartQuizStreamResponse {
+  jobId: string;
+  quizSetId: string;
+}
+
+/**
+ * POST /api/quiz/generate/stream — same payload as generateQuizApi, returns the
+ * job to subscribe to plus the quiz set id questions will be saved under.
+ */
+export async function startQuizStreamApi(
+  options: GenerateQuizOptions,
+  config: QuizConfig,
+): Promise<StartQuizStreamResponse> {
+  const response = await fetch(`${API_URL}/api/quiz/generate/stream`, {
+    method: "POST",
+    body: _buildGenerateFormData(options, config),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(
+      data.error || `Quiz generation failed (${response.status})`,
+    );
+  }
+
+  return response.json();
+}
+
+export interface QuizStreamHandlers {
+  /** Every parsed frame, in order. Never called after onStreamError. */
+  onEvent: (event: QuizStreamEvent) => void;
+  /** Transport gave up (reconnect budget / idle watchdog). Terminal. */
+  onStreamError: (message: string) => void;
+}
+
+/**
+ * GET /api/quiz/generate/stream/<jobId> — live generation progress.
+ *
+ * Returns an unsubscribe function; calling it twice is safe. The connection is
+ * closed before the terminal `done` / fatal `error` event is dispatched, so the
+ * browser never auto-reconnects to a finished job.
+ */
+export function subscribeQuizStreamApi(
+  jobId: string,
+  handlers: QuizStreamHandlers,
+  cursor?: number,
+): () => void {
+  const params = cursor ? `?from=${cursor}` : "";
+  const url = `${API_URL}/api/quiz/generate/stream/${encodeURIComponent(jobId)}${params}`;
+
+  const stream = openEventStream<QuizStreamEvent>(url, {
+    onMessage: (event) => {
+      if (event.type === "done" || (event.type === "error" && event.fatal)) {
+        stream.close();
+      }
+      handlers.onEvent(event);
+    },
+    onGiveUp: handlers.onStreamError,
+  });
+
+  return stream.close;
 }
 
 export interface ExtractTextOptions {

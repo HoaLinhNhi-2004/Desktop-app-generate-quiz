@@ -68,30 +68,13 @@
       "subtitle": "Tùy chỉnh quiz theo nhu cầu của bạn"
     },
     "generating": "Đang tạo quiz...",
-    "generatingWait": "Vui lòng chờ, không đóng cửa sổ này.",
     "createQuizBtn": "Tạo Quiz",
     "noMaterialSelected": "Chưa chọn tài liệu",
     "noMaterialSelectedDesc": "Vui lòng chọn ít nhất một tài liệu đã tải lên để tạo quiz.",
     "noMaterialSelectedPdf": "Không có file PDF",
     "noMaterialSelectedPdfDesc": "Quiz này không có file PDF nguồn để hiển thị. Chỉ hỗ trợ xem nguồn cho quiz được tạo từ file PDF.",
-    "steps": {
-      "upload": "Tải file lên server",
-      "uploadDesc": "Đang nhận dữ liệu...",
-      "extract": "Trích xuất văn bản",
-      "extractDesc": "OCR / PDF / DOCX đang được xử lý...",
-      "analyze": "Phân tích nội dung",
-      "analyzeDesc": "Làm sạch và chọn đoạn văn quan trọng...",
-      "aiGenerate": "AI tạo câu hỏi",
-      "aiGenerateDesc": "Gemini đang soạn câu hỏi...",
-      "ytTranscript": "Tải transcript YouTube",
-      "ytTranscriptDesc": "Đang lấy phụ đề...",
-      "ytSummarize": "AI tóm tắt transcript",
-      "ytSummarizeDesc": "Gemini đang xử lý...",
-      "ytQuiz": "Soạn câu hỏi từ nội dung video...",
-      "textAnalyze": "Phân tích văn bản",
-      "textAnalyzeDesc": "Đang làm sạch...",
-      "textQuiz": "Gemini đang soạn câu hỏi..."
-    }
+    "streamRunning": "Đang tạo quiz…",
+    "streamRunningHint": "Xem tiến trình"
   },
   "errors": {
     "allModelsExhausted": {
@@ -184,7 +167,39 @@
     "questionList": "Danh sách câu hỏi",
     "viewing": "Đang xem",
     "answeredStatus": "Đã trả lời",
-    "unanswered": "Chưa trả lời"
+    "unanswered": "Chưa trả lời",
+    "stream": {
+      "generating": "Đang tạo… {{loaded}}/{{total}}",
+      "waitingNext": "Đang tạo câu tiếp…",
+      "pendingSlot": "Câu {{n}} — đang tạo",
+      "pendingLegend": "Đang tạo",
+      "preparing": "Đang chuẩn bị câu hỏi đầu tiên…",
+      "preparingHint": "Bạn có thể trả lời ngay khi câu đầu tiên xuất hiện.",
+      "ocrPage": "OCR trang {{current}}/{{total}}",
+      "rateLimitWait": "Đã chạm giới hạn tốc độ, đang chờ {{seconds}} giây rồi thử lại…",
+      "failedPartial": "Tạo quiz bị lỗi sau {{count}} câu. Bạn vẫn có thể nộp phần đã làm.",
+      "failedEmpty": "Không tạo được câu hỏi nào.",
+      "backToFolder": "Về thư mục",
+      "disconnected": "Mất kết nối tới máy chủ. Các câu đã tải vẫn dùng được.",
+      "stopAndSubmit": "Dừng & nộp bài",
+      "stopConfirmTitle": "Dừng tạo câu hỏi?",
+      "stopConfirmDesc": "Các câu chưa tạo xong sẽ bị bỏ. Bạn sẽ nộp {{count}} câu đã tải.",
+      "stopConfirmAction": "Dừng & nộp",
+      "stages": {
+        "extracting": "Trích xuất văn bản",
+        "extractingDesc": "Đang đọc PDF / DOCX…",
+        "ocr": "OCR tài liệu scan",
+        "ocrDesc": "Nhận dạng chữ trong ảnh…",
+        "analyzing": "Phân tích nội dung",
+        "analyzingDesc": "Làm sạch và chọn đoạn quan trọng…",
+        "generating": "AI tạo câu hỏi",
+        "generatingDesc": "Gemini đang soạn câu hỏi…",
+        "saving": "Đang lưu",
+        "savingDesc": "Ghi bộ câu hỏi vào thư mục…",
+        "queued": "Chờ tới lượt",
+        "queuedDesc": "Đang xếp hàng xử lý…"
+      }
+    }
   },
   "quizQuestion": {
     "questionN": "Câu {{n}}: ",
@@ -727,7 +742,11 @@
       "generatedDesc": "Sinh xong {{count}} câu hỏi.",
       "imported": "Đã nhập quiz",
       "importedDesc": "Đã nhập {{count}} câu hỏi.",
-      "generateFailed": "Tạo quiz thất bại"
+      "generateFailed": "Tạo quiz thất bại",
+      "streamPartial": "Tạo quiz dừng giữa chừng",
+      "streamPartialDesc": "Chỉ tạo được {{count}}/{{total}} câu hỏi.",
+      "missingAnswers": "Câu hỏi chưa có đáp án",
+      "missingAnswersDesc": "Có {{count}} câu hỏi chưa có đáp án đúng. Vui lòng cập nhật thủ công."
     },
     "upload": {
       "reprocessStarted": "Đang xử lý lại tài liệu",
@@ -757,7 +776,8 @@
       "progress": "Đã trả lời {{answered}} trên {{total}} câu",
       "scoreAnnounce": "Bạn đạt {{score}}%, đúng {{correct}} trên {{total}} câu",
       "answeredCorrect": "Câu {{n}} đúng",
-      "answeredWrong": "Câu {{n}} sai"
+      "answeredWrong": "Câu {{n}} sai",
+      "questionArrived": "Đã tải câu {{n}} trên {{total}}"
     },
     "settings": {
       "sectionTitle": "Hỗ trợ tiếp cận (Accessibility)",

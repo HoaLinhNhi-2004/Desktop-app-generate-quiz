@@ -12,9 +12,11 @@ Optimization strategy (Lost-in-the-Middle fix):
   └──────────────────────────────────────────────────────────┘
 """
 
+import copy
 import hashlib
 import json
 import re
+import threading
 import uuid
 import logging
 import os
@@ -42,6 +44,9 @@ _MAX_PARALLEL_CHUNKS = 6
 # Maximum questions per single API call — Vietnamese JSON is ~400 tokens/question;
 # exceeding this with 8 192 output-token cap causes truncation.
 _MAX_QUESTIONS_PER_CALL = 15
+
+# Import mode has no target count — this is only a runaway guard for the sink.
+_IMPORT_QUESTION_CAP = 500
 
 # ---------------------------------------------------------------------------
 # Quiz Difficulty Engine Constants
@@ -112,6 +117,48 @@ def _calc_max_output_tokens(num_questions: int, question_type: str) -> int:
     return min(65_536, max(8_192, estimated))
 
 
+def _classify_429(err: Exception) -> tuple[bool, bool, bool]:
+    """Classify a Gemini exception as (is_429, is_rpm, is_rpd)."""
+    err_str = str(err).lower()
+    is_429 = "429" in err_str or "resource_exhausted" in err_str or "resourceexhausted" in err_str
+    is_rpm = any(kw in err_str for kw in ("per minute", "rpm", "rate limit", "minute"))
+    is_rpd = any(kw in err_str for kw in ("per day", "rpd", "daily", "quota"))
+    return is_429, is_rpm, is_rpd
+
+
+def _chunk_delta_text(chunk) -> str:
+    """
+    Text carried by one streaming chunk, or "" when it carries none.
+
+    Never use `chunk.text` here — it raises ValueError for chunks that hold only
+    finish_reason / usage_metadata and no parts, which would abort the stream.
+    """
+    try:
+        candidates = getattr(chunk, "candidates", None) or []
+        if not candidates:
+            return ""
+        parts = getattr(candidates[0].content, "parts", None) or []
+        return "".join(getattr(p, "text", "") or "" for p in parts)
+    except Exception:
+        return ""
+
+
+def _read_usage(source, usage: dict) -> None:
+    """Fold usage_metadata into `usage`. Gemini reports cumulative totals per chunk."""
+    try:
+        meta = getattr(source, "usage_metadata", None)
+        if not meta:
+            return
+        prompt_tokens = getattr(meta, "prompt_token_count", 0) or 0
+        output_tokens = getattr(meta, "candidates_token_count", 0) or 0
+        if prompt_tokens:
+            usage["input_tokens"] = prompt_tokens
+        if output_tokens:
+            usage["output_tokens"] = max(usage["output_tokens"], output_tokens)
+    except Exception:
+        pass
+
+
 def _generate_with_fallback(
     prompt: str,
     api_key: str,
@@ -165,15 +212,12 @@ def _generate_with_fallback(
                 return raw, model_name, token_info
 
             except Exception as e:
-                err_str = str(e).lower()
-                is_429 = "429" in err_str or "resource_exhausted" in err_str or "resourceexhausted" in err_str
+                is_429, is_rpm, is_rpd = _classify_429(e)
 
                 if not is_429:
                     raise
 
                 last_err = e
-                is_rpm = any(kw in err_str for kw in ("per minute", "rpm", "rate limit", "minute"))
-                is_rpd = any(kw in err_str for kw in ("per day", "rpd", "daily", "quota"))
 
                 if is_rpm and not rpm_retried:
                     logger.warning(
@@ -188,6 +232,114 @@ def _generate_with_fallback(
                     "Model %s %s limit hit. Trying next model... (error: %s)",
                     model_name, quota_type, str(e)[:120],
                 )
+                break
+
+    raise RuntimeError(
+        f"All Gemini models exhausted (tried: {', '.join(model_chain)}). "
+        f"Last error: {last_err}"
+    )
+
+
+def _stream_with_fallback(
+    prompt: str,
+    api_key: str,
+    model_chain: list[str],
+    on_text,
+    on_notice=None,
+    stop_event=None,
+    **kwargs,
+) -> tuple[str, str, dict]:
+    """
+    Streaming twin of _generate_with_fallback — same model-fallback and RPM-retry
+    behaviour, but text is handed to `on_text(delta)` as it arrives.
+
+    on_notice(code, data): non-fatal events worth showing the user
+        ("rpmWait" with retryInSeconds, "modelFallback" with from/to).
+    stop_event: threading.Event — stop consuming the stream once it is set.
+
+    Returns (raw_text, model_used, token_info), the same contract as the blocking
+    version, so callers can still run _parse_response() over the raw text.
+    """
+    import time
+    import google.generativeai as genai
+
+    genai.configure(api_key=api_key)
+
+    def _notice(code: str, data: dict) -> None:
+        if on_notice:
+            try:
+                on_notice(code, data)
+            except Exception:
+                pass
+
+    last_err: Exception | None = None
+    for model_index, model_name in enumerate(model_chain):
+        rpm_retried = False
+        while True:
+            parts: list[str] = []
+            usage = {"input_tokens": 0, "output_tokens": 0}
+            try:
+                logger.info("Streaming from Gemini model: %s", model_name)
+                max_out = kwargs.get("max_output_tokens", 16_384)
+                model = genai.GenerativeModel(model_name)
+                stream = model.generate_content(
+                    prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.3,
+                        max_output_tokens=max_out,
+                    ),
+                    stream=True,
+                )
+                stopped_early = False
+                for chunk in stream:
+                    _read_usage(chunk, usage)
+                    delta = _chunk_delta_text(chunk)
+                    if delta:
+                        parts.append(delta)
+                        on_text(delta)
+                    if stop_event is not None and stop_event.is_set():
+                        logger.info("Stopping %s stream early — quota already reached", model_name)
+                        stopped_early = True
+                        break
+                if not stopped_early:
+                    _read_usage(stream, usage)
+
+                raw = "".join(parts).strip()
+                logger.info("Gemini %s stream: %d chars", model_name, len(raw))
+                return raw, model_name, usage
+
+            except Exception as e:
+                if parts:
+                    # Text already reached the caller. Retrying would resend the same
+                    # prompt and duplicate questions, so keep the partial result.
+                    logger.warning(
+                        "Gemini %s stream failed after %d chars — keeping partial: %s",
+                        model_name, sum(len(p) for p in parts), e,
+                    )
+                    return "".join(parts).strip(), model_name, usage
+
+                is_429, is_rpm, is_rpd = _classify_429(e)
+                if not is_429:
+                    raise
+
+                last_err = e
+
+                if is_rpm and not rpm_retried:
+                    logger.warning(
+                        "Model %s hit RPM limit. Waiting 65 s then retrying...", model_name
+                    )
+                    _notice("rpmWait", {"model": model_name, "retryInSeconds": 65})
+                    time.sleep(65)
+                    rpm_retried = True
+                    continue
+
+                quota_type = "RPD daily" if is_rpd else "quota"
+                logger.warning(
+                    "Model %s %s limit hit. Trying next model... (error: %s)",
+                    model_name, quota_type, str(e)[:120],
+                )
+                if model_index + 1 < len(model_chain):
+                    _notice("modelFallback", {"from": model_name, "to": model_chain[model_index + 1]})
                 break
 
     raise RuntimeError(
@@ -335,6 +487,232 @@ def _deduplicate_questions(questions: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Incremental streaming: parse + emit questions as they arrive
+# ---------------------------------------------------------------------------
+
+
+class _StreamingArrayParser:
+    """
+    Resumable scanner over a growing JSON buffer.
+
+    `feed(delta)` returns the array elements that became complete since the last
+    call, so questions can be emitted while Gemini is still writing.  Handles the
+    three shapes the model actually produces: a raw array, a fenced array
+    (```json ... ```), and a wrapper object ({"questions": [...]}).
+
+    A stack — not a brace counter — is what makes the wrapper case work: there
+    the elements sit at depth 2, and a plain counter would emit nothing until the
+    wrapper closed at the very end.
+    """
+
+    def __init__(self) -> None:
+        self._buf = ""
+        self._pos = 0
+        self._stack: list[str] = []
+        self._in_string = False
+        self._escaped = False
+        self._target_depth: int | None = None
+        self._obj_start = -1
+        self._emitted = 0
+
+    @property
+    def buffer(self) -> str:
+        return self._buf
+
+    @property
+    def emitted_count(self) -> int:
+        return self._emitted
+
+    def feed(self, delta: str) -> list[dict]:
+        self._buf += delta
+        found: list[dict] = []
+
+        while self._pos < len(self._buf):
+            ch = self._buf[self._pos]
+            i = self._pos
+            self._pos += 1
+
+            if self._in_string:
+                if self._escaped:
+                    self._escaped = False
+                elif ch == "\\":
+                    self._escaped = True
+                elif ch == '"':
+                    self._in_string = False
+                continue
+
+            if ch == '"':
+                self._in_string = True
+            elif ch == "[":
+                self._stack.append("[")
+                if self._target_depth is None:
+                    self._target_depth = len(self._stack)
+            elif ch == "{":
+                if self._target_depth is not None and len(self._stack) == self._target_depth:
+                    self._obj_start = i
+                self._stack.append("{")
+            elif ch == "}":
+                if self._stack:
+                    self._stack.pop()
+                if (
+                    self._target_depth is not None
+                    and len(self._stack) == self._target_depth
+                    and self._obj_start >= 0
+                ):
+                    raw = self._buf[self._obj_start : i + 1]
+                    self._obj_start = -1
+                    try:
+                        obj = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(obj, dict):
+                        self._emitted += 1
+                        found.append(obj)
+            elif ch == "]":
+                if self._stack:
+                    self._stack.pop()
+
+        return found
+
+
+class _QuestionSink:
+    """
+    Thread-safe collector shared by the parallel chunk workers.
+
+    Owns deduplication, numbering and the question quota so that questions can be
+    published one at a time instead of only after every chunk has finished.
+
+    `on_question` is invoked while the lock is held.  That is deliberate: the
+    callback is a dict append plus a condition notify, and holding the lock is
+    what guarantees subscribers observe questionNumber 1, 2, 3, … in order.
+    """
+
+    def __init__(self, limit: int, on_question, dedupe: bool = True) -> None:
+        self._lock = threading.Lock()
+        self._seen: list[str] = []
+        self._accepted: list[dict] = []
+        self._limit = limit
+        self._on_question = on_question
+        # Mirror the non-streaming path: a single Gemini call was never deduped,
+        # only the multi-chunk and import merges were.
+        self._dedupe = dedupe
+        self.quota_reached = threading.Event()
+
+    @property
+    def count(self) -> int:
+        with self._lock:
+            return len(self._accepted)
+
+    def snapshot(self) -> list[dict]:
+        with self._lock:
+            return list(self._accepted)
+
+    def offer(self, question: dict) -> bool:
+        import difflib
+
+        with self._lock:
+            if len(self._accepted) >= self._limit:
+                self.quota_reached.set()
+                return False
+
+            text = question.get("questionText", "").lower().strip()
+            if self._dedupe and any(
+                difflib.SequenceMatcher(None, text, seen).ratio() > 0.70
+                for seen in self._seen
+            ):
+                return False
+
+            number = len(self._accepted) + 1
+            question["questionNumber"] = number
+            question["id"] = f"q{number}_{uuid.uuid4().hex[:6]}"
+            self._seen.append(text)
+            self._accepted.append(question)
+            if len(self._accepted) >= self._limit:
+                self.quota_reached.set()
+
+            if self._on_question:
+                try:
+                    self._on_question(question, number)
+                except Exception as e:
+                    logger.warning("on_question callback failed: %s", e)
+            return True
+
+
+def _run_chunk_call(
+    prompt: str,
+    api_key: str,
+    model_chain: list[str],
+    max_out: int,
+    question_type: str,
+    sink: "_QuestionSink | None",
+    on_notice=None,
+    validate=None,
+    parse_all=None,
+) -> tuple[list[dict], str, dict, str, ValueError | None]:
+    """
+    One Gemini call for one chunk, streaming when a sink is present.
+
+    validate / parse_all default to the generate-mode pair; import mode passes
+    its own lenient equivalents.
+
+    Returns (questions, model_used, token_info, raw_text, parse_error).  A parse
+    error is returned rather than raised so the caller can still record token
+    usage and dump the raw response before deciding to retry.  Without a sink the
+    behaviour is exactly the previous blocking path.
+    """
+    if validate is None:
+        def validate(q):
+            return _validate_question(q, question_type)
+    if parse_all is None:
+        def parse_all(raw_text):
+            return _parse_response(raw_text, question_type)
+
+    if sink is None:
+        raw, model_used, tok = _generate_with_fallback(
+            prompt, api_key, model_chain, max_output_tokens=max_out
+        )
+        try:
+            return parse_all(raw), model_used, tok, raw, None
+        except ValueError as e:
+            return [], model_used, tok, raw, e
+
+    parser = _StreamingArrayParser()
+    collected: list[dict] = []
+
+    def _on_text(delta: str) -> None:
+        for obj in parser.feed(delta):
+            try:
+                validated = validate(obj)
+            except Exception as e:
+                logger.warning("Skipping invalid streamed question: %s", e)
+                continue
+            collected.append(validated)
+            sink.offer(validated)
+
+    raw, model_used, tok = _stream_with_fallback(
+        prompt,
+        api_key,
+        model_chain,
+        on_text=_on_text,
+        on_notice=on_notice,
+        stop_event=sink.quota_reached,
+        max_output_tokens=max_out,
+    )
+
+    if not collected:
+        # Nothing parsed incrementally — fall back to the batch parser over the
+        # full buffer so streaming can never be worse than the blocking path.
+        try:
+            for validated in parse_all(raw):
+                collected.append(validated)
+                sink.offer(validated)
+        except ValueError as e:
+            return [], model_used, tok, raw, e
+
+    return collected, model_used, tok, raw, None
+
+
+# ---------------------------------------------------------------------------
 # Multi-chunk parallel generation
 # ---------------------------------------------------------------------------
 
@@ -346,6 +724,8 @@ def _generate_multi_chunk(
     language: str,
     gemini_api_key: str,
     model_chain: list[str],
+    sink: "_QuestionSink | None" = None,
+    on_notice=None,
 ) -> tuple[list[dict], dict]:
     """
     Split text into ≤ _MAX_PARALLEL_CHUNKS chunks and call Gemini in parallel,
@@ -355,6 +735,8 @@ def _generate_multi_chunk(
     text receives equal LLM attention as the primary (and only) content.
 
     Returns a deduplicated list of at least min(num_questions, total_generated) items.
+    When `sink` is given, questions are published one at a time as they stream in
+    and the sink owns dedup + numbering, so the returned list is its snapshot.
     """
     chunks = _split_into_chunks(text, _MAX_CHUNK_SIZE)
 
@@ -420,10 +802,12 @@ def _generate_multi_chunk(
 
     all_questions: list[dict] = []
     accumulated_tokens = {"input_tokens": 0, "output_tokens": 0, "models": {}}
-    import threading
     _tok_lock = threading.Lock()
 
     def _worker(idx: int, chunk: str, quota: int) -> list[dict]:
+        if sink is not None and sink.quota_reached.is_set():
+            logger.info("  Chunk %d/%d: skipped — quota already reached", idx + 1, n)
+            return []
         logger.info("  Chunk %d/%d: %d chars → %d questions", idx + 1, n, len(chunk), quota)
         max_tok = _calc_max_output_tokens(quota, question_type)
         prompt = _build_prompt(
@@ -448,9 +832,9 @@ def _generate_multi_chunk(
                     "  Chunk %d/%d: retry attempt %d/3 (quota=%d)...",
                     idx + 1, n, attempt + 1, cur_quota,
                 )
-            raw, model_used, tok = _generate_with_fallback(
-                prompt, gemini_api_key, model_chain,
-                max_output_tokens=max_tok,
+            qs, model_used, tok, raw, parse_err = _run_chunk_call(
+                prompt, gemini_api_key, model_chain, max_tok, question_type,
+                sink, on_notice,
             )
             in_tok = tok.get("input_tokens", 0)
             out_tok = tok.get("output_tokens", 0)
@@ -467,47 +851,47 @@ def _generate_multi_chunk(
                 raw,
                 meta=f"# Chunk {idx+1}/{n} | model={model_used} | attempt={attempt + 1}",
             )
-            try:
-                qs = _parse_response(raw, question_type)
-                logger.info(
-                    "  Chunk %d/%d: got %d/%d questions via %s",
-                    idx + 1, n, len(qs), cur_quota, model_used,
+            def _shrink_and_rebuild() -> None:
+                """Halve the ask so the model produces shorter, parseable output."""
+                nonlocal cur_quota, max_tok, prompt
+                cur_quota = max(3, cur_quota * 2 // 3)
+                max_tok = _calc_max_output_tokens(cur_quota, question_type)
+                prompt = _build_prompt(
+                    chunk, cur_quota, question_type, difficulty, language,
+                    coverage_hint=coverage_hint,
+                    chunk_label=f"[Part {idx + 1}/{n}]" if n > 1 else "",
                 )
-                # Detect truncated response: got very few questions vs requested
-                if len(qs) < cur_quota * 0.4 and attempt < 2:
-                    logger.warning(
-                        "  Chunk %d/%d: only %d/%d questions — likely truncated, retrying with fewer",
-                        idx + 1, n, len(qs), cur_quota,
-                    )
-                    # Reduce quota and rebuild prompt for retry
-                    cur_quota = max(3, cur_quota * 2 // 3)
-                    max_tok = _calc_max_output_tokens(cur_quota, question_type)
-                    prompt = _build_prompt(
-                        chunk, cur_quota, question_type, difficulty, language,
-                        coverage_hint=coverage_hint,
-                        chunk_label=f"[Part {idx + 1}/{n}]" if n > 1 else "",
-                    )
-                    continue
-                return qs
-            except ValueError as parse_err:
+
+            if parse_err is not None:
                 if attempt < 2:
                     logger.warning(
                         "  Chunk %d/%d: JSON parse error (attempt %d/3): %s",
                         idx + 1, n, attempt + 1, parse_err,
                     )
-                    # On parse failure, reduce quota to produce shorter, parseable output
-                    cur_quota = max(3, cur_quota * 2 // 3)
-                    max_tok = _calc_max_output_tokens(cur_quota, question_type)
-                    prompt = _build_prompt(
-                        chunk, cur_quota, question_type, difficulty, language,
-                        coverage_hint=coverage_hint,
-                        chunk_label=f"[Part {idx + 1}/{n}]" if n > 1 else "",
-                    )
-                else:
-                    logger.error(
-                        "  Chunk %d/%d: JSON parse failed after 3 attempts, returning []: %s",
-                        idx + 1, n, parse_err,
-                    )
+                    _shrink_and_rebuild()
+                    continue
+                logger.error(
+                    "  Chunk %d/%d: JSON parse failed after 3 attempts, returning []: %s",
+                    idx + 1, n, parse_err,
+                )
+                return []
+
+            logger.info(
+                "  Chunk %d/%d: got %d/%d questions via %s",
+                idx + 1, n, len(qs), cur_quota, model_used,
+            )
+            # Detect truncated response: got very few questions vs requested.
+            # Retrying is safe while streaming too — re-emitted duplicates are
+            # rejected by the sink's dedup.
+            stop_early = sink is not None and sink.quota_reached.is_set()
+            if len(qs) < cur_quota * 0.4 and attempt < 2 and not stop_early:
+                logger.warning(
+                    "  Chunk %d/%d: only %d/%d questions — likely truncated, retrying with fewer",
+                    idx + 1, n, len(qs), cur_quota,
+                )
+                _shrink_and_rebuild()
+                continue
+            return qs
         return []
 
     with ThreadPoolExecutor(max_workers=min(n, _MAX_PARALLEL_CHUNKS)) as pool:
@@ -520,6 +904,12 @@ def _generate_multi_chunk(
             except Exception as e:
                 logger.warning("Chunk %d failed: %s", idx + 1, e)
                 chunk_results[idx] = []
+
+    if sink is not None:
+        # The sink already deduped, numbered and capped as questions streamed in.
+        streamed = sink.snapshot()
+        logger.info("Multi-chunk (streaming): published %d questions", len(streamed))
+        return streamed, accumulated_tokens
 
     for i in range(n):
         all_questions.extend(chunk_results.get(i, []))
@@ -544,9 +934,18 @@ def generate_quiz(
     language: str = "vi",
     gemini_api_key: str = "",
     model_chain: list[str] | None = None,
+    on_question=None,
+    on_notice=None,
 ) -> tuple[list[dict], dict]:
     """
     Generate quiz questions from text using Google Gemini.
+
+    on_question(question, number): when given, questions are streamed to this
+        callback one at a time as Gemini writes them, instead of only being
+        returned at the end.  Numbering, dedup and the question cap then belong
+        to the sink, so callers see the same list either way.
+    on_notice(code, data): non-fatal progress notices ("rpmWait", "modelFallback",
+        "cacheHit").
 
     Returns:
         (questions, token_usage)
@@ -555,10 +954,23 @@ def generate_quiz(
     if not model_chain:
         model_chain = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
 
+    sink = (
+        _QuestionSink(num_questions, on_question, dedupe=len(text) > _SINGLE_CALL_THRESHOLD)
+        if on_question else None
+    )
+
     key = _cache_key(text, num_questions, question_type, difficulty, language)
     cached = _cache_get(key)
     if cached is not None:
         logger.info("Cache hit — returning %s cached questions", len(cached))
+        if sink is not None:
+            if on_notice:
+                on_notice("cacheHit", {"count": len(cached)})
+            # deepcopy: the sink rewrites id/questionNumber, and these dicts are
+            # the ones still held by the LRU cache.
+            for cached_q in copy.deepcopy(cached):
+                sink.offer(cached_q)
+            return sink.snapshot(), {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         return cached, {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     logger.info(
@@ -576,7 +988,7 @@ def generate_quiz(
             )
             questions, chunk_tokens = _generate_multi_chunk(
                 text, num_questions, question_type, difficulty, language,
-                gemini_api_key, model_chain,
+                gemini_api_key, model_chain, sink=sink, on_notice=on_notice,
             )
             token_usage["input_tokens"] = chunk_tokens.get("input_tokens", 0)
             token_usage["output_tokens"] = chunk_tokens.get("output_tokens", 0)
@@ -586,16 +998,20 @@ def generate_quiz(
             # Use different text segments per round for diversity
             topup_chunks = _split_into_chunks(text, _MAX_CHUNK_SIZE)
             for _topup_round in range(3):
-                deficit = num_questions - len(questions)
+                have = sink.count if sink is not None else len(questions)
+                deficit = num_questions - have
                 if deficit <= 0:
                     break
                 logger.info(
                     "Top-up round %d/3: have %d/%d questions, requesting %d more",
-                    _topup_round + 1, len(questions), num_questions, deficit,
+                    _topup_round + 1, have, num_questions, deficit,
                 )
+                if on_notice:
+                    on_notice("topUp", {"round": _topup_round + 1, "deficit": deficit})
                 try:
                     already_asked = "\n".join(
-                        f"- {q.get('questionText', '')[:80]}" for q in questions
+                        f"- {q.get('questionText', '')[:80]}"
+                        for q in (sink.snapshot() if sink is not None else questions)
                     )
                     # Rotate through text chunks for different source material each round
                     chunk_idx = _topup_round % len(topup_chunks)
@@ -607,11 +1023,12 @@ def generate_quiz(
                         + "\n\nIMPORTANT: Do NOT repeat questions on these topics (already generated):\n"
                         + already_asked
                     )
-                    raw_topup, model_topup, tok_topup = _generate_with_fallback(
-                        topup_prompt, gemini_api_key, model_chain,
-                        max_output_tokens=topup_max_tok,
+                    topup_qs, model_topup, tok_topup, _raw_topup, topup_parse_err = _run_chunk_call(
+                        topup_prompt, gemini_api_key, model_chain, topup_max_tok,
+                        question_type, sink, on_notice,
                     )
-                    topup_qs = _parse_response(raw_topup, question_type)
+                    if topup_parse_err is not None:
+                        raise topup_parse_err
                     in_tok = tok_topup.get("input_tokens", 0)
                     out_tok = tok_topup.get("output_tokens", 0)
                     token_usage["input_tokens"] += in_tok
@@ -622,7 +1039,12 @@ def generate_quiz(
                     tu_model[model_topup]["requests"] += 1
                     tu_model[model_topup]["input_tokens"] += in_tok
                     tu_model[model_topup]["output_tokens"] += out_tok
-                    questions = _deduplicate_questions(questions + topup_qs)
+                    # With a sink, dedup/numbering already happened as each question
+                    # streamed in, so its snapshot is the authoritative list.
+                    questions = (
+                        sink.snapshot() if sink is not None
+                        else _deduplicate_questions(questions + topup_qs)
+                    )
                     logger.info(
                         "Top-up round %d/3: +%d new → total %d questions",
                         _topup_round + 1, len(topup_qs), len(questions),
@@ -640,9 +1062,13 @@ def generate_quiz(
                     f"difficulty={difficulty} | lang={language} | chars={len(prompt)}"
                 ),
             )
-            raw_text, model_used, tok = _generate_with_fallback(prompt, gemini_api_key, model_chain)
+            questions, model_used, tok, raw_text, parse_err = _run_chunk_call(
+                prompt, gemini_api_key, model_chain, 16_384,
+                question_type, sink, on_notice,
+            )
             _save_debug_file("response", raw_text, meta=f"# model={model_used}")
-            questions = _parse_response(raw_text, question_type)
+            if parse_err is not None:
+                raise parse_err
             in_tok = tok.get("input_tokens", 0)
             out_tok = tok.get("output_tokens", 0)
             token_usage["input_tokens"] = in_tok
@@ -654,11 +1080,16 @@ def generate_quiz(
 
         token_usage["total_tokens"] = token_usage["input_tokens"] + token_usage["output_tokens"]
 
-        for i, q in enumerate(questions):
-            q["id"] = f"q{i+1}_{uuid.uuid4().hex[:6]}"
-            q["questionNumber"] = i + 1
+        if sink is not None:
+            # Ids and numbers were assigned as each question was published; keeping
+            # them is what lets the client's answers stay keyed to the right question.
+            questions = sink.snapshot()
+        else:
+            for i, q in enumerate(questions):
+                q["id"] = f"q{i+1}_{uuid.uuid4().hex[:6]}"
+                q["questionNumber"] = i + 1
+            questions = questions[:num_questions]
 
-        questions = questions[:num_questions]
         _cache_put(key, questions)
         logger.info(
             "Returning %d questions | tokens: in=%d out=%d total=%d",
@@ -721,18 +1152,25 @@ def import_quiz_from_text(
     language: str = "vi",
     gemini_api_key: str = "",
     model_chain: list[str] | None = None,
+    on_question=None,
+    on_notice=None,
 ) -> tuple[list[dict], dict]:
     """
     Extract existing quiz questions from text using Google Gemini.
-    
+
     Unlike generate_quiz(), this function does NOT create new questions.
     It extracts and parses existing Q&A content from the source text.
-    
+
+    on_question(question, number) streams each extracted question as it arrives.
+    There is no target count in import mode, so the sink is effectively uncapped.
+
     Returns:
         (questions, token_usage)
     """
     if not model_chain:
         model_chain = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
+
+    sink = _QuestionSink(_IMPORT_QUESTION_CAP, on_question) if on_question else None
 
     logger.info(
         "import_quiz_from_text: %d chars | lang=%s",
@@ -760,7 +1198,6 @@ def import_quiz_from_text(
 
         logger.info("Import extraction: %d chunks, text=%d chars", n, len(text))
 
-        import threading
         _tok_lock = threading.Lock()
 
         def _import_worker(idx: int, chunk: str) -> list[dict]:
@@ -776,9 +1213,11 @@ def import_quiz_from_text(
             
             for attempt in range(3):
                 try:
-                    raw, model_used, tok = _generate_with_fallback(
-                        prompt, gemini_api_key, model_chain,
-                        max_output_tokens=max_tok,
+                    qs, model_used, tok, raw, parse_err = _run_chunk_call(
+                        prompt, gemini_api_key, model_chain, max_tok, "multiple-choice",
+                        sink, on_notice,
+                        validate=_validate_import_question,
+                        parse_all=_parse_import_response,
                     )
                     in_tok = tok.get("input_tokens", 0)
                     out_tok = tok.get("output_tokens", 0)
@@ -790,15 +1229,15 @@ def import_quiz_from_text(
                         token_usage["models"][model_used]["requests"] += 1
                         token_usage["models"][model_used]["input_tokens"] += in_tok
                         token_usage["models"][model_used]["output_tokens"] += out_tok
-                    
+
                     _save_debug_file(
                         f"import_response_chunk{idx+1}of{n}",
                         raw,
                         meta=f"# Import chunk {idx+1}/{n} | model={model_used} | attempt={attempt + 1}",
                     )
-                    
-                    # Parse with relaxed validation for import mode
-                    qs = _parse_import_response(raw)
+
+                    if parse_err is not None:
+                        raise parse_err
                     logger.info(
                         "  Import chunk %d/%d: got %d questions via %s",
                         idx + 1, n, len(qs), model_used,
@@ -834,13 +1273,14 @@ def import_quiz_from_text(
                 for i in range(n):
                     all_questions.extend(chunk_results.get(i, []))
 
-        # Deduplicate
-        deduped = _deduplicate_questions(all_questions)
-        
-        # Assign IDs and question numbers
-        for i, q in enumerate(deduped):
-            q["id"] = f"q{i+1}_{uuid.uuid4().hex[:6]}"
-            q["questionNumber"] = i + 1
+        if sink is not None:
+            # Streaming already deduped and numbered each question on arrival.
+            deduped = sink.snapshot()
+        else:
+            deduped = _deduplicate_questions(all_questions)
+            for i, q in enumerate(deduped):
+                q["id"] = f"q{i+1}_{uuid.uuid4().hex[:6]}"
+                q["questionNumber"] = i + 1
 
         token_usage["total_tokens"] = token_usage["input_tokens"] + token_usage["output_tokens"]
         

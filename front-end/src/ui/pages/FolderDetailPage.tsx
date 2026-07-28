@@ -1,4 +1,4 @@
-import { useState, useEffect, type ElementType } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -18,18 +18,10 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Sparkles,
   ArrowRight,
   Loader2,
   Settings2,
-  Upload,
   ArrowLeft,
   Folder,
   Play,
@@ -38,9 +30,6 @@ import {
   BookOpen,
   FileUp,
   BarChart3,
-  Brain,
-  CheckCircle2,
-  ScanText,
   BookOpenCheck,
   Edit3,
   FileSearch,
@@ -58,114 +47,21 @@ import { QuizConfigPanel } from "../components/QuizConfig";
 import { MaterialsTab } from "../components/MaterialsTab";
 import { MaterialSelectPanel } from "../components/MaterialSelectPanel";
 import {
-  useGenerateQuiz,
   useQuizSets,
   useDeleteQuizSet,
+  useQuizStreamContext,
   getQuizSetApi,
 } from "@/features/quizz";
 import type {
   QuizConfig,
   QuizQuestion,
-  InputMode,
+  QuizRouteState,
   QuizSetSummary,
 } from "@/features/quizz";
 import { useFolders } from "../../features/folders";
 import { useUploadRecords } from "@/features/upload";
 import { FolderStatsSection } from "../components/folder-stats";
 import { useFolderDetailStats } from "@/features/stats";
-
-// ─── Error parsing ──────────────────────────────────────────────────────────
-
-function parseQuizError(err: Error): {
-  title: string;
-  description: string;
-  duration?: number;
-} {
-  const msg = err.message ?? "";
-
-  // Quota / rate limit (HTTP 429)
-  if (/429|quota exceeded|rate.?limit|free.?tier/i.test(msg)) {
-    if (/all gemini models exhausted/i.test(msg)) {
-      return {
-        title: i18n.t("errors.allModelsExhausted.title"),
-        description: i18n.t("errors.allModelsExhausted.description"),
-        duration: 12000,
-      };
-    }
-    const retryMatch =
-      msg.match(/retry(?: in)? (\d+(?:\.\d+)?)\s*s/i) ??
-      msg.match(/seconds: (\d+)/i);
-    const retrySec = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) : null;
-    const retryNote = retrySec
-      ? ` ${i18n.t("errors.quotaExceeded.retryIn", { seconds: retrySec })}`
-      : ` ${i18n.t("errors.quotaExceeded.retryLater")}`;
-    return {
-      title: i18n.t("errors.quotaExceeded.title"),
-      description:
-        i18n.t("errors.quotaExceeded.description") +
-        retryNote +
-        ` ${i18n.t("errors.quotaExceeded.checkBilling")}`,
-      duration: 10000,
-    };
-  }
-
-  if (/api key not configured|GEMINI_API_KEY|chưa có gemini/i.test(msg)) {
-    return {
-      title: i18n.t("errors.noApiKey.title"),
-      description: i18n.t("errors.noApiKey.description"),
-      duration: 8000,
-    };
-  }
-
-  if (/401|invalid.?api.?key|api_key_invalid/i.test(msg)) {
-    return {
-      title: i18n.t("errors.invalidApiKey.title"),
-      description: i18n.t("errors.invalidApiKey.description"),
-      duration: 8000,
-    };
-  }
-
-  if (/could not extract any text|no text content/i.test(msg)) {
-    return {
-      title: i18n.t("errors.noTextExtracted.title"),
-      description: i18n.t("errors.noTextExtracted.description"),
-      duration: 8000,
-    };
-  }
-
-  if (/no transcripts|transcripts disabled|captions disabled/i.test(msg)) {
-    return {
-      title: i18n.t("errors.noTranscript.title"),
-      description: i18n.t("errors.noTranscript.description"),
-      duration: 8000,
-    };
-  }
-
-  if (/invalid youtube url/i.test(msg)) {
-    return {
-      title: i18n.t("errors.invalidYoutubeUrl.title"),
-      description: i18n.t("errors.invalidYoutubeUrl.description"),
-      duration: 6000,
-    };
-  }
-
-  if (/network|fetch|ECONNREFUSED|failed to fetch/i.test(msg)) {
-    return {
-      title: i18n.t("errors.networkError.title"),
-      description: i18n.t("errors.networkError.description"),
-      duration: 8000,
-    };
-  }
-
-  return {
-    title: i18n.t("errors.quizFailed.title"),
-    description:
-      msg.length > 200
-        ? msg.slice(0, 200) + "…"
-        : msg || i18n.t("errors.quizFailed.unknownError"),
-    duration: 8000,
-  };
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -565,183 +461,6 @@ function QuizPdfViewerDialog({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ─── Generating Progress Modal ──────────────────────────────────────────────
-
-interface GeneratingStage {
-  icon: ElementType;
-  label: string;
-  detail: string;
-}
-
-function getGeneratingStages(): Record<InputMode, GeneratingStage[]> {
-  return {
-    files: [
-      {
-        icon: Upload,
-        label: i18n.t("folder.steps.upload"),
-        detail: i18n.t("folder.steps.uploadDesc"),
-      },
-      {
-        icon: ScanText,
-        label: i18n.t("folder.steps.extract"),
-        detail: i18n.t("folder.steps.extractDesc"),
-      },
-      {
-        icon: Brain,
-        label: i18n.t("folder.steps.analyze"),
-        detail: i18n.t("folder.steps.analyzeDesc"),
-      },
-      {
-        icon: Sparkles,
-        label: i18n.t("folder.steps.aiGenerate"),
-        detail: i18n.t("folder.steps.aiGenerateDesc"),
-      },
-    ],
-    youtube: [
-      {
-        icon: Play,
-        label: i18n.t("folder.steps.ytTranscript"),
-        detail: i18n.t("folder.steps.ytTranscriptDesc"),
-      },
-      {
-        icon: Brain,
-        label: i18n.t("folder.steps.ytSummarize"),
-        detail: i18n.t("folder.steps.ytSummarizeDesc"),
-      },
-      {
-        icon: Sparkles,
-        label: i18n.t("folder.steps.aiGenerate"),
-        detail: i18n.t("folder.steps.ytQuiz"),
-      },
-    ],
-    text: [
-      {
-        icon: FileUp,
-        label: i18n.t("folder.steps.textAnalyze"),
-        detail: i18n.t("folder.steps.textAnalyzeDesc"),
-      },
-      {
-        icon: Sparkles,
-        label: i18n.t("folder.steps.aiGenerate"),
-        detail: i18n.t("folder.steps.textQuiz"),
-      },
-    ],
-  };
-}
-
-// Cumulative delay (ms) before advancing to each subsequent stage
-const STAGE_DELAYS: Record<InputMode, number[]> = {
-  files: [2500, 7000, 6000], // 2.5 s → 9.5 s → 15.5 s
-  youtube: [5000, 12000], // 5 s → 17 s
-  text: [2000], // 2 s
-};
-
-function GeneratingModal({
-  open,
-  inputMode,
-}: {
-  open: boolean;
-  inputMode: InputMode;
-}) {
-  const stages = getGeneratingStages()[inputMode];
-  const [currentStage, setCurrentStage] = useState(0);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCurrentStage(0);
-    if (!open) return;
-    const stageDelays = STAGE_DELAYS[inputMode];
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    let cumulative = 0;
-    stageDelays.forEach((delay, i) => {
-      cumulative += delay;
-      const t = setTimeout(() => setCurrentStage(i + 1), cumulative);
-      timers.push(t);
-    });
-    return () => timers.forEach(clearTimeout);
-  }, [open, inputMode]);
-
-  return (
-    <Dialog open={open}>
-      <DialogContent
-        showCloseButton={false}
-        className="sm:max-w-sm gap-0 overflow-hidden p-0"
-        onInteractOutside={(e) => e.preventDefault()}
-        onEscapeKeyDown={(e) => e.preventDefault()}
-      >
-        <DialogHeader className="px-6 pt-6 pb-2">
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <Loader2 className="size-4 animate-spin text-primary" />
-            {i18n.t("folder.generating")}
-          </DialogTitle>
-          <DialogDescription>
-            {i18n.t("folder.generatingWait")}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-1.5 px-6 pb-6 pt-3">
-          {stages.map((stage, i) => {
-            const status =
-              i < currentStage
-                ? "done"
-                : i === currentStage
-                  ? "active"
-                  : "pending";
-            const Icon = stage.icon;
-            return (
-              <div
-                key={i}
-                className={cn(
-                  "flex items-start gap-3 rounded-lg p-3 transition-all duration-500",
-                  status === "active" && "bg-primary/8 ring-1 ring-primary/20",
-                  status === "done" && "opacity-60",
-                  status === "pending" && "opacity-30",
-                )}
-              >
-                <div
-                  className={cn(
-                    "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full",
-                    status === "done" && "bg-emerald-500/15 text-emerald-500",
-                    status === "active" && "bg-primary/15 text-primary",
-                    status === "pending" && "bg-muted text-muted-foreground",
-                  )}
-                >
-                  {status === "done" ? (
-                    <CheckCircle2 className="size-4" />
-                  ) : status === "active" ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Icon className="size-4" />
-                  )}
-                </div>
-                <div className="flex min-h-7 flex-col justify-center gap-0.5">
-                  <span
-                    className={cn(
-                      "text-sm font-medium leading-tight",
-                      status === "active"
-                        ? "text-foreground"
-                        : "text-muted-foreground",
-                    )}
-                  >
-                    {stage.label}
-                  </span>
-                  {status === "active" && (
-                    <span className="text-xs text-muted-foreground">
-                      {stage.detail}
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-
 const DEFAULT_CONFIG: QuizConfig = {
   numberOfQuestions: 5,
   questionType: "multiple-choice",
@@ -762,11 +481,12 @@ export function FolderDetailPage() {
   const [reusedFileIds, setReusedFileIds] = useState<string[]>([]);
   const [quizAction, setQuizAction] = useState<"generate" | "import">("generate");
 
-  const generateQuiz = useGenerateQuiz();
+  const { job, isStarting, startQuizStream } = useQuizStreamContext();
+  const isStreamRunning = job?.status === "running";
 
   const inputReady = reusedFileIds.length > 0;
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!inputReady) {
       toast.warning(t("folder.noMaterialSelected"), {
         description: t("folder.noMaterialSelectedDesc"),
@@ -774,75 +494,36 @@ export function FolderDetailPage() {
       return;
     }
 
-    generateQuiz.mutate(
-      {
-        options: {
-          inputMode: "files",
-          files: [],
-          youtubeInput: { url: "", captionLang: "vi" },
-          rawText: "",
-          folderId: id,
-          reusedFileIds,
-          action: quizAction,
-        },
+    const started = await startQuizStream({
+      options: {
+        inputMode: "files",
+        files: [],
+        youtubeInput: { url: "", captionLang: "vi" },
+        rawText: "",
+        folderId: id,
+        reusedFileIds,
+        action: quizAction,
+      },
+      config,
+    });
+    if (!started) return; // the provider already surfaced the error
+
+    queryClient.invalidateQueries({ queryKey: ["quizSets", id] });
+    queryClient.invalidateQueries({ queryKey: ["uploadRecords", id] });
+
+    // Go straight to the quiz — questions stream in there.
+    navigate("/quiz", {
+      state: {
         config,
-      },
-      {
-        onSuccess: (data) => {
-          queryClient.invalidateQueries({ queryKey: ["quizSets", id] });
-          queryClient.invalidateQueries({ queryKey: ["uploadRecords", id] });
-
-          if (data.tokenUsage && data.tokenUsage.total_tokens > 0) {
-            const t = data.tokenUsage;
-            toast.info("Token usage", {
-              description: `Input: ${t.input_tokens.toLocaleString()} · Output: ${t.output_tokens.toLocaleString()} · Total: ${t.total_tokens.toLocaleString()} tokens`,
-              duration: 6000,
-            });
-          }
-
-          // Check for questions without correct answers (import mode)
-          if (quizAction === "import") {
-            const noAnswerCount = data.questions.filter(
-              (q: QuizQuestion) => !q.correctAnswerId
-            ).length;
-            if (noAnswerCount > 0) {
-              toast.warning(
-                t("smartImportQuiz.missingAnswersTitle", { defaultValue: "Câu hỏi chưa có đáp án" }),
-                {
-                  description: t("smartImportQuiz.missingAnswersDesc", {
-                    count: noAnswerCount,
-                    defaultValue: `Có ${noAnswerCount} câu hỏi chưa có đáp án đúng. Vui lòng cập nhật thủ công.`,
-                  }),
-                  duration: 10000,
-                },
-              );
-            }
-          }
-
-          navigate("/quiz", {
-            state: {
-              questions: data.questions,
-              config,
-              extractedText: data.extractedText,
-              filesProcessed: data.filesProcessed,
-              folderId: id,
-              quizSetId: data.quizSetId,
-              sourceFiles: [],
-            },
-          });
-        },
-        onError: (err) => {
-          const { title, description, duration } = parseQuizError(err);
-          toast.error(title, { description, duration: duration ?? 8000 });
-        },
-      },
-    );
+        folderId: id,
+        quizSetId: started.quizSetId,
+        sourceFiles: [],
+      } satisfies QuizRouteState,
+    });
   };
-
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 min-h-0 flex-col gap-4 p-6">
-      <GeneratingModal open={generateQuiz.isPending} inputMode="files" />
 
       {/* Breadcrumb / Back */}
       <div className="flex items-center gap-3 shrink-0">
@@ -1010,15 +691,15 @@ export function FolderDetailPage() {
                           : "bg-linear-to-r from-primary to-primary/80 shadow-lg shadow-primary/25 hover:shadow-xl hover:shadow-primary/30"
                         : "",
                     )}
-                    disabled={!inputReady || generateQuiz.isPending}
+                    disabled={!inputReady || isStarting || isStreamRunning}
                     onClick={handleGenerate}
                   >
-                    {generateQuiz.isPending ? (
+                    {isStarting || isStreamRunning ? (
                       <>
                         <Loader2 className="size-5 animate-spin" />
                         {quizAction === "import"
                           ? t("smartImportQuiz.importing", { defaultValue: "Đang trích xuất..." })
-                          : t("folder.generating")}
+                          : t("folder.streamRunning")}
                       </>
                     ) : (
                       <>
@@ -1034,6 +715,17 @@ export function FolderDetailPage() {
                       </>
                     )}
                   </Button>
+
+                  {isStreamRunning && (
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => navigate("/quiz")}
+                    >
+                      {t("folder.streamRunningHint")}
+                    </Button>
+                  )}
 
                 </CardFooter>
               </Card>

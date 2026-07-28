@@ -1,6 +1,8 @@
 export * from "./types";
 export {
   generateQuizApi,
+  startQuizStreamApi,
+  subscribeQuizStreamApi,
   extractTextApi,
   healthCheckApi,
   getQuizSetsApi,
@@ -12,6 +14,9 @@ export {
 } from "./api";
 export type {
   GenerateQuizResponse,
+  GenerateQuizOptions,
+  StartQuizStreamResponse,
+  QuizStreamHandlers,
   ExtractTextResponse,
   SourceTextPage,
   SourceTextResponse,
@@ -21,8 +26,17 @@ export type {
   YouTubeTimelineResponse,
 } from "./api";
 export {
-  useGenerateQuiz,
   useExtractText,
   useQuizSets,
   useDeleteQuizSet,
+  useUpdateQuizSet,
+  useQuizStream,
+  useQuizSource,
+  useQuizDraft,
 } from "./hooks";
+export type {
+  QuizStreamContextValue,
+  StartQuizStreamInput,
+  QuizDraft,
+} from "./hooks";
+export { QuizStreamProvider, useQuizStreamContext } from "./context";

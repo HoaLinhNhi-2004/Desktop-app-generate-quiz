@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import confetti from "canvas-confetti";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useSpeech } from "@/lib/use-speech";
 import { buildQuestionSpeech } from "@/lib/quiz-speech";
@@ -19,12 +20,24 @@ import {
   ChevronDown,
   Clock,
   FileSpreadsheet,
+  Loader2,
   Printer,
   Download,
   Eye,
   FileText,
   Image as ImageIcon,
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { DocxPreview } from "../components/DocxPreview";
 import {
   Dialog,
@@ -44,6 +57,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { exportQuizToDocx, exportQuizToKahoot } from "@/lib/export";
 import { QuizQuestion } from "../components/QuizQuestion";
+import { QuizStreamPending } from "../components/QuizStreamPending";
+import {
+  useQuizDraft,
+  useQuizSource,
+  useQuizStreamContext,
+} from "@/features/quizz";
 import type {
   QuizQuestion as QuizQuestionType,
   QuizResult,
@@ -52,57 +71,59 @@ import { useSaveAttempt } from "@/features/stats";
 
 export function QuizPage() {
   const navigate = useNavigate();
-  const location = useLocation();
   const { t, i18n } = useTranslation();
   const { ttsEnabled, ttsRate } = useA11y();
+  const reduceMotion = useReducedMotion();
   const speech = useSpeech({
     rate: ttsRate,
     lang: i18n.language === "en" ? "en-US" : "vi-VN",
   });
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [currentIndex, setCurrentIndex] = useState(0);
+
+  const { job, stopQuizStream } = useQuizStreamContext();
+  const source = useQuizSource(job);
+  const {
+    questions,
+    expectedTotal,
+    isLive,
+    isStreamComplete,
+    isRehydrating,
+    sourceFiles,
+    quizSetId,
+    folderId,
+  } = source;
+  const loadedCount = questions.length;
+
+  const { initialDraft, saveDraft, clearDraft } = useQuizDraft(quizSetId);
+  const [answers, setAnswers] = useState<Record<string, string>>(
+    initialDraft.answers,
+  );
+  const [currentIndex, setCurrentIndex] = useState(initialDraft.currentIndex);
   const [isSubmitted, setIsSubmitted] = useState(false);
-  const [startTime] = useState(() => Date.now());
+  const [mountTime] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
 
-  // Get questions from route state (passed from HomePage after API call)
-  const routeState = location.state as {
-    questions?: QuizQuestionType[];
-    config?: Record<string, unknown>;
-    extractedText?: string;
-    filesProcessed?: number;
-    folderId?: string;
-    quizSetId?: string;
-    sourceFiles?: {
-      id: string;
-      name: string;
-      type: string;
-      preview?: string;
-    }[];
-  } | null;
-
-  const questions = useMemo<QuizQuestionType[]>(
-    () => routeState?.questions ?? [],
-    [routeState?.questions],
-  );
-  const sourceFiles = routeState?.sourceFiles ?? [];
-  const quizSetId = routeState?.quizSetId;
-  const folderId = routeState?.folderId;
+  // While streaming, the clock starts when question 1 lands: the user cannot
+  // answer before that, and OCR minutes must not be charged to their attempt.
+  const startTime = isLive ? source.firstQuestionAt : mountTime;
 
   const saveAttempt = useSaveAttempt();
 
-  // Redirect to home if no questions available
+  // Nothing to show and nothing on the way — go home.
   useEffect(() => {
-    if (questions.length === 0) {
+    if (!isLive && !isRehydrating && loadedCount === 0) {
       navigate("/", { replace: true });
     }
-  }, [questions.length, navigate]);
+  }, [isLive, isRehydrating, loadedCount, navigate]);
+
+  useEffect(() => {
+    saveDraft({ answers, currentIndex });
+  }, [answers, currentIndex, saveDraft]);
 
   const currentQuestion = questions[currentIndex];
 
   // Timer
   useEffect(() => {
-    if (isSubmitted) return;
+    if (isSubmitted || startTime === null) return;
     const interval = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startTime) / 1000));
     }, 1000);
@@ -137,7 +158,11 @@ export function QuizPage() {
   );
 
   const answeredCount = Object.keys(answers).length;
-  const progressPercent = (answeredCount / questions.length) * 100;
+  // Progress is measured against the target, not against what happens to have
+  // arrived, so the bar does not jump backwards as questions stream in.
+  const progressPercent =
+    expectedTotal > 0 ? (answeredCount / expectedTotal) * 100 : 0;
+  const canSubmit = answeredCount > 0 && (!isLive || isStreamComplete);
 
   const result: QuizResult | null = useMemo(() => {
     if (!isSubmitted) return null;
@@ -182,7 +207,11 @@ export function QuizPage() {
   }, [isSubmitted, questions, answers, elapsed]);
 
   const handleSubmit = useCallback(() => {
+    // Freeze the job first so every denominator below counts only what the user
+    // was actually shown.
+    if (isLive && !isStreamComplete) stopQuizStream();
     setIsSubmitted(true);
+    clearDraft();
 
     // Confetti effect
     const correctCount = questions.filter((q) => {
@@ -282,11 +311,22 @@ export function QuizPage() {
         wrongCount: questions.length - correct - skipped,
         skippedCount: skipped,
         totalQuestions: questions.length,
-        timeTaken: Math.floor((Date.now() - startTime) / 1000),
+        timeTaken: elapsed,
         questionResults,
       });
     }
-  }, [quizSetId, folderId, questions, answers, startTime, saveAttempt]);
+  }, [
+    quizSetId,
+    folderId,
+    questions,
+    answers,
+    elapsed,
+    saveAttempt,
+    isLive,
+    isStreamComplete,
+    stopQuizStream,
+    clearDraft,
+  ]);
 
   const handleRetry = () => {
     setAnswers({});
@@ -328,8 +368,10 @@ export function QuizPage() {
           break;
         case "Enter": {
           e.preventDefault();
+          // While streaming, question 1 *is* the last loaded question — Enter
+          // must not submit a one-question quiz.
           if (currentIndex === questions.length - 1) {
-            handleSubmit();
+            if (canSubmit) handleSubmit();
           } else {
             setCurrentIndex((i) => Math.min(questions.length - 1, i + 1));
           }
@@ -379,14 +421,15 @@ export function QuizPage() {
     currentQuestion,
     handleAnswerChange,
     handleSubmit,
+    canSubmit,
     answers,
     ttsEnabled,
     speech.supported,
     handleToggleRead,
   ]);
 
-  // Don't render if no questions (will redirect via useEffect)
-  if (questions.length === 0 || !currentQuestion) {
+  // A live job renders the full chrome even before the first question lands.
+  if (loadedCount === 0 && !isLive) {
     return null;
   }
 
@@ -466,7 +509,12 @@ export function QuizPage() {
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-1.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={loadedCount === 0}
+                >
                   <Download className="size-4" />
                   {t("quiz.export")}
                   <ChevronDown className="size-3 opacity-50" />
@@ -520,7 +568,7 @@ export function QuizPage() {
               role="status"
               aria-live="polite"
             >
-              {answeredCount}/{questions.length} {t("quiz.answered")}
+              {answeredCount}/{expectedTotal} {t("quiz.answered")}
             </Badge>
           </div>
         </div>
@@ -532,6 +580,26 @@ export function QuizPage() {
             {Math.round(progressPercent)}% {t("quiz.complete")}
           </p>
         </div>
+
+        {/* Count-only live region: with read-aloud on, announcing the question
+            text here would make the screen reader repeat it on every arrival. */}
+        <span className="sr-only" role="status" aria-live="polite">
+          {isLive
+            ? t("a11y.live.questionArrived", {
+                n: loadedCount,
+                total: expectedTotal,
+              })
+            : ""}
+        </span>
+
+        {source.error && loadedCount > 0 && (
+          <div
+            role="alert"
+            className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          >
+            {t("quiz.stream.failedPartial", { count: loadedCount })}
+          </div>
+        )}
 
         {/* Question card */}
         <Card className="flex min-h-0 flex-1 flex-col">
@@ -561,18 +629,39 @@ export function QuizPage() {
                       </div>
                     ))}
                   </div>
+                ) : currentQuestion ? (
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={currentQuestion.id}
+                      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={
+                        reduceMotion ? { opacity: 1 } : { opacity: 0, y: -6 }
+                      }
+                      transition={{
+                        duration: reduceMotion ? 0 : 0.18,
+                        ease: "easeOut",
+                      }}
+                    >
+                      <QuizQuestion
+                        question={currentQuestion}
+                        selectedAnswer={answers[currentQuestion.id]}
+                        onAnswerChange={handleAnswerChange}
+                        onToggleRead={
+                          ttsEnabled && speech.supported
+                            ? handleToggleRead
+                            : undefined
+                        }
+                        isReading={speech.speakingId === currentQuestion.id}
+                      />
+                    </motion.div>
+                  </AnimatePresence>
                 ) : (
-                  // Show current question
-                  <QuizQuestion
-                    question={currentQuestion}
-                    selectedAnswer={answers[currentQuestion.id]}
-                    onAnswerChange={handleAnswerChange}
-                    onToggleRead={
-                      ttsEnabled && speech.supported
-                        ? handleToggleRead
-                        : undefined
+                  <QuizStreamPending
+                    source={source}
+                    onBackToFolder={
+                      folderId ? () => navigate(`/folder/${folderId}`) : undefined
                     }
-                    isReading={speech.speakingId === currentQuestion.id}
                   />
                 )}
               </div>
@@ -598,22 +687,25 @@ export function QuizPage() {
                 <span className="text-sm font-medium text-muted-foreground">
                   {t("quiz.questionOf", {
                     current: currentIndex + 1,
-                    total: questions.length,
+                    total: expectedTotal,
                   })}
                 </span>
               </div>
 
-              {currentIndex < questions.length - 1 ? (
+              {currentIndex < loadedCount - 1 ? (
                 <Button
                   onClick={() =>
-                    setCurrentIndex((i) =>
-                      Math.min(questions.length - 1, i + 1),
-                    )
+                    setCurrentIndex((i) => Math.min(loadedCount - 1, i + 1))
                   }
                   className="gap-1.5"
                 >
                   {t("quiz.nextQuestion")}
                   <ArrowRight className="size-4" />
+                </Button>
+              ) : isLive && !isStreamComplete ? (
+                <Button disabled className="gap-1.5">
+                  <Loader2 className="size-4 animate-spin" />
+                  {t("quiz.stream.waitingNext")}
                 </Button>
               ) : (
                 <Button disabled className="gap-1.5">
@@ -822,30 +914,57 @@ export function QuizPage() {
                   <ScrollArea className="h-full">
                     <div className="px-6 pb-6">
                       <div className="grid grid-cols-5 gap-2">
-                        {questions.map((q, i) => (
-                          <button
-                            key={q.id}
-                            type="button"
-                            onClick={() => setCurrentIndex(i)}
-                            aria-current={
-                              i === currentIndex ? "true" : undefined
-                            }
-                            aria-label={t("quiz.questionOf", {
-                              current: i + 1,
-                              total: questions.length,
-                            })}
-                            className={cn(
-                              "flex size-10 items-center justify-center rounded-md text-sm font-medium transition-all",
-                              i === currentIndex
-                                ? "bg-primary text-primary-foreground ring-2 ring-primary/30"
-                                : answers[q.id]
-                                  ? "bg-green-500/15 text-green-500 border border-green-500/30"
-                                  : "bg-muted text-muted-foreground hover:bg-muted/80",
-                            )}
-                          >
-                            {i + 1}
-                          </button>
-                        ))}
+                        {Array.from(
+                          { length: Math.max(expectedTotal, loadedCount) },
+                          (_, i) => questions[i],
+                        ).map((q, i) =>
+                          q ? (
+                            <motion.button
+                              key={q.id}
+                              type="button"
+                              initial={
+                                reduceMotion ? false : { scale: 0.9, opacity: 0 }
+                              }
+                              animate={{ scale: 1, opacity: 1 }}
+                              transition={{ duration: reduceMotion ? 0 : 0.15 }}
+                              onClick={() => setCurrentIndex(i)}
+                              aria-current={
+                                i === currentIndex ? "true" : undefined
+                              }
+                              aria-label={t("quiz.questionOf", {
+                                current: i + 1,
+                                total: expectedTotal,
+                              })}
+                              className={cn(
+                                "flex size-10 items-center justify-center rounded-md text-sm font-medium transition-all",
+                                i === currentIndex
+                                  ? "bg-primary text-primary-foreground ring-2 ring-primary/30"
+                                  : answers[q.id]
+                                    ? "bg-green-500/15 text-green-500 border border-green-500/30"
+                                    : "bg-muted text-muted-foreground hover:bg-muted/80",
+                              )}
+                            >
+                              {i + 1}
+                            </motion.button>
+                          ) : (
+                            // `disabled` also removes it from the tab order.
+                            <button
+                              key={`pending-${i}`}
+                              type="button"
+                              disabled
+                              aria-label={t("quiz.stream.pendingSlot", {
+                                n: i + 1,
+                              })}
+                              className="flex size-10 items-center justify-center rounded-md border border-dashed bg-muted/40 text-sm font-medium text-muted-foreground/40"
+                            >
+                              {i === loadedCount ? (
+                                <Loader2 className="size-3 animate-spin" />
+                              ) : (
+                                i + 1
+                              )}
+                            </button>
+                          ),
+                        )}
                       </div>
 
                       <Separator className="my-4" />
@@ -863,24 +982,74 @@ export function QuizPage() {
                           <div className="size-3 rounded-sm bg-muted" />
                           <span>{t("quiz.unanswered")}</span>
                         </div>
+                        {isLive && !isStreamComplete && (
+                          <div className="flex items-center gap-2">
+                            <div className="size-3 rounded-sm border border-dashed bg-muted/40" />
+                            <span>{t("quiz.stream.pendingLegend")}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </ScrollArea>
                 </CardContent>
               </Card>
 
-              <Button
-                onClick={handleSubmit}
-                disabled={answeredCount === 0}
-                className="w-full shrink-0 gap-2"
-                size="lg"
-              >
-                <CheckCircle2 className="size-5" />
-                {t("quiz.submitCount", {
-                  count: answeredCount,
-                  total: questions.length,
-                })}
-              </Button>
+              <div className="shrink-0 space-y-2">
+                <Button
+                  onClick={handleSubmit}
+                  disabled={!canSubmit}
+                  className="w-full gap-2"
+                  size="lg"
+                >
+                  {isLive && !isStreamComplete ? (
+                    <>
+                      <Loader2 className="size-5 animate-spin" />
+                      {t("quiz.stream.generating", {
+                        loaded: loadedCount,
+                        total: expectedTotal,
+                      })}
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="size-5" />
+                      {t("quiz.submitCount", {
+                        count: answeredCount,
+                        total: expectedTotal,
+                      })}
+                    </>
+                  )}
+                </Button>
+
+                {isLive && !isStreamComplete && loadedCount > 0 && (
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="ghost" size="sm" className="w-full">
+                        {t("quiz.stream.stopAndSubmit")}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>
+                          {t("quiz.stream.stopConfirmTitle")}
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                          {t("quiz.stream.stopConfirmDesc", {
+                            count: loadedCount,
+                          })}
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>
+                          {t("common.cancel")}
+                        </AlertDialogCancel>
+                        <AlertDialogAction onClick={handleSubmit}>
+                          {t("quiz.stream.stopConfirmAction")}
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                )}
+              </div>
             </div>
           </>
         )}

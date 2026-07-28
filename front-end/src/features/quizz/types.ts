@@ -94,3 +94,177 @@ export interface UploadedFile {
   file: File;
   preview?: string;
 }
+
+// ─── Streaming quiz generation ──────────────────────────────────────────────
+
+export interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+}
+
+export interface PageDistribution {
+  distribution: Record<string, number>; // page number (string) → question count
+  totalPages: number;
+}
+
+export type QuizStreamStage =
+  | "queued"
+  | "extracting"
+  | "ocr"
+  | "analyzing"
+  | "generating"
+  | "saving";
+
+export type QuizStreamStatus =
+  | "starting"
+  | "running"
+  | "completed"
+  | "error"
+  | "disconnected";
+
+export type QuizStreamAction = "generate" | "import";
+
+export type QuizStreamNoticeCode =
+  | "rpmWait"
+  | "modelFallback"
+  | "cacheHit"
+  | "topUp";
+
+export interface QuizStreamStageEvent {
+  type: "stage";
+  stage: QuizStreamStage;
+  detail?: string;
+  /** 1-based sub-progress within the stage, e.g. OCR page 3 of 12 */
+  current?: number;
+  total?: number;
+}
+
+export interface QuizStreamMetaEvent {
+  type: "meta";
+  totalTextLength: number;
+  filesProcessed: number;
+  inputType: InputMode;
+  /** 0 in import mode — the document decides how many questions there are */
+  numberOfQuestions: number;
+  config: QuizConfig;
+}
+
+export interface QuizStreamQuestionEvent {
+  type: "question";
+  /** 0-based slot; the backend emits densely and in order */
+  index: number;
+  /** Expected total, or 0 when unknown (import mode) */
+  total: number;
+  question: QuizQuestion;
+}
+
+export interface QuizStreamNoticeEvent {
+  type: "notice";
+  code: QuizStreamNoticeCode;
+  message?: string;
+  retryInSeconds?: number;
+  model?: string;
+  from?: string;
+  to?: string;
+  count?: number;
+  round?: number;
+  deficit?: number;
+}
+
+export interface QuizStreamDoneEvent {
+  type: "done";
+  quizSetId: string;
+  questions: QuizQuestion[];
+  config: QuizConfig;
+  extractedText: string;
+  totalTextLength: number;
+  filesProcessed: number;
+  inputType: InputMode;
+  tokenUsage?: TokenUsage;
+  pageDistribution?: PageDistribution | null;
+}
+
+export interface QuizStreamErrorEvent {
+  type: "error";
+  message: string;
+  fatal: boolean;
+  status?: number;
+  errorId?: string;
+}
+
+export interface QuizStreamPingEvent {
+  type: "ping";
+}
+
+export interface QuizStreamResyncEvent {
+  type: "resync";
+}
+
+export type QuizStreamEvent =
+  | QuizStreamStageEvent
+  | QuizStreamMetaEvent
+  | QuizStreamQuestionEvent
+  | QuizStreamNoticeEvent
+  | QuizStreamDoneEvent
+  | QuizStreamErrorEvent
+  | QuizStreamPingEvent
+  | QuizStreamResyncEvent;
+
+export interface QuizStreamJob {
+  jobId: string;
+  quizSetId: string;
+  folderId?: string;
+  config: QuizConfig;
+  action: QuizStreamAction;
+  status: QuizStreamStatus;
+  stage: QuizStreamStage;
+  stageDetail?: string;
+  stageCurrent?: number;
+  stageTotal?: number;
+  notice: QuizStreamNoticeEvent | null;
+  questions: QuizQuestion[];
+  /** config.numberOfQuestions until the backend revises it */
+  expectedTotal: number;
+  error: string | null;
+  startedAt: number;
+  /** epoch ms of the first question — drives the quiz timer */
+  firstQuestionAt: number | null;
+}
+
+export interface QuizSourceFile {
+  id: string;
+  name: string;
+  type: string;
+  preview?: string;
+}
+
+/** Normalized view for QuizPage: a static replay and a live stream look alike. */
+export interface QuizSource {
+  questions: QuizQuestion[];
+  loadedCount: number;
+  expectedTotal: number;
+  isLive: boolean;
+  isStreamComplete: boolean;
+  isRehydrating: boolean;
+  stage: QuizStreamStage | null;
+  stageDetail: string | null;
+  stageCurrent: number | null;
+  stageTotal: number | null;
+  notice: QuizStreamNoticeEvent | null;
+  error: string | null;
+  firstQuestionAt: number | null;
+  quizSetId?: string;
+  folderId?: string;
+  config?: QuizConfig;
+  sourceFiles: QuizSourceFile[];
+}
+
+/** Typed shape of the state QuizPage receives via navigate(). */
+export interface QuizRouteState {
+  questions?: QuizQuestion[];
+  config?: QuizConfig;
+  folderId?: string;
+  quizSetId?: string;
+  sourceFiles?: QuizSourceFile[];
+}
