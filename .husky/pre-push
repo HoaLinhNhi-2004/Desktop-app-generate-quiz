@@ -6,9 +6,14 @@ set -e
 cd front-end
 
 # Catches the exact failure CI hits first: package.json changed without its lock
-# file. --dry-run validates the tree without touching node_modules.
+# file. Checked against a copy because npm rewrites a yarn.lock it finds beside
+# the package.json — even under --dry-run — which would dirty the tree on every
+# push.
 echo "[pre-push 1/4] package-lock.json in sync"
-npm ci --dry-run >/dev/null
+lockcheck=$(mktemp -d)
+trap 'rm -rf "$lockcheck"' EXIT
+cp package.json package-lock.json "$lockcheck/"
+(cd "$lockcheck" && npm ci --dry-run >/dev/null)
 
 echo "[pre-push 2/4] ESLint"
 npm run lint
