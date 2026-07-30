@@ -415,12 +415,23 @@ export function useQuizSource(job: QuizStreamJob | null): QuizSource {
     }
 
     if (job) {
+      // Generation stops accepting questions at the configured count and saves
+      // them under the ids already streamed, so the list is final the moment it
+      // is full. The backend still needs a few seconds to merge and persist —
+      // blocking the quiz on that leaves the user staring at "generating 5/5".
+      // Import has no target count, so it stays gated on the job's own status.
+      const targetMet =
+        job.action === "generate" &&
+        job.expectedTotal > 0 &&
+        job.questions.length >= job.expectedTotal;
+
       return {
         questions: job.questions,
         loadedCount: job.questions.length,
         expectedTotal: Math.max(job.expectedTotal, job.questions.length),
         isLive: true,
         isStreamComplete:
+          targetMet ||
           job.status === "completed" ||
           job.status === "disconnected" ||
           (job.status === "error" && job.questions.length > 0),

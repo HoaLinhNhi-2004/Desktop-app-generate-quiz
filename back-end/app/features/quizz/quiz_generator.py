@@ -325,11 +325,28 @@ def _stream_with_fallback(
                 last_err = e
 
                 if is_rpm and not rpm_retried:
+                    if stop_event is not None and stop_event.is_set():
+                        logger.info(
+                            "Model %s: skipping RPM retry — quota already reached", model_name
+                        )
+                        return "", model_name, usage
+
                     logger.warning(
                         "Model %s hit RPM limit. Waiting 65 s then retrying...", model_name
                     )
                     _notice("rpmWait", {"model": model_name, "retryInSeconds": 65})
-                    time.sleep(65)
+                    # Interruptible: when another chunk fills the quota mid-wait the
+                    # job has to end now, not 65 s later — the client keeps the run
+                    # marked in-progress until this call returns.
+                    if stop_event is not None:
+                        if stop_event.wait(65):
+                            logger.info(
+                                "Model %s: RPM retry abandoned — quota reached while waiting",
+                                model_name,
+                            )
+                            return "", model_name, usage
+                    else:
+                        time.sleep(65)
                     rpm_retried = True
                     continue
 
@@ -862,18 +879,25 @@ def _generate_multi_chunk(
                     chunk_label=f"[Part {idx + 1}/{n}]" if n > 1 else "",
                 )
 
+            stop_early = sink is not None and sink.quota_reached.is_set()
+
             if parse_err is not None:
-                if attempt < 2:
+                if attempt < 2 and not stop_early:
                     logger.warning(
                         "  Chunk %d/%d: JSON parse error (attempt %d/3): %s",
                         idx + 1, n, attempt + 1, parse_err,
                     )
                     _shrink_and_rebuild()
                     continue
-                logger.error(
-                    "  Chunk %d/%d: JSON parse failed after 3 attempts, returning []: %s",
-                    idx + 1, n, parse_err,
-                )
+                if stop_early:
+                    logger.info(
+                        "  Chunk %d/%d: dropped unparsed — quota already reached", idx + 1, n
+                    )
+                else:
+                    logger.error(
+                        "  Chunk %d/%d: JSON parse failed after 3 attempts, returning []: %s",
+                        idx + 1, n, parse_err,
+                    )
                 return []
 
             logger.info(
@@ -883,7 +907,6 @@ def _generate_multi_chunk(
             # Detect truncated response: got very few questions vs requested.
             # Retrying is safe while streaming too — re-emitted duplicates are
             # rejected by the sink's dedup.
-            stop_early = sink is not None and sink.quota_reached.is_set()
             if len(qs) < cur_quota * 0.4 and attempt < 2 and not stop_early:
                 logger.warning(
                     "  Chunk %d/%d: only %d/%d questions — likely truncated, retrying with fewer",
