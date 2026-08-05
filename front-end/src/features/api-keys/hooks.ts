@@ -1,11 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AddKeyResult,
-  GeminiApiKey,
   KeyPoolSummary,
   KeysResponse,
   KeyUsageHistory,
+  LlmApiKey,
+  LlmProvider,
+  LlmSettings,
   PoolUsageHistory,
+  ProvidersResponse,
+  RefreshModelsResult,
   VerifyKeyResult,
 } from "./types";
 import {
@@ -13,12 +17,17 @@ import {
   deleteKeyApi,
   getKeyUsageHistoryApi,
   getKeysApi,
+  getLlmSettingsApi,
   getPoolUsageHistoryApi,
+  getProvidersApi,
+  refreshProviderModelsApi,
   updateKeyApi,
+  updateLlmSettingsApi,
   verifyKeyApi,
 } from "./api";
 
 const QUERY_KEY = ["api-keys"] as const;
+const PROVIDERS_KEY = ["api-keys", "providers"] as const;
 
 const emptySummary: KeyPoolSummary = {
   totalKeys: 0,
@@ -35,6 +44,7 @@ const emptySummary: KeyPoolSummary = {
   totalOutputTokensToday: 0,
   totalTokensToday: 0,
   modelUsage: [],
+  providerUsage: [],
 };
 
 export function useApiKeys() {
@@ -45,14 +55,15 @@ export function useApiKeys() {
     queryFn: getKeysApi,
   });
 
+  // QUERY_KEY is a prefix of PROVIDERS_KEY, so this refreshes both.
   const invalidate = () => qc.invalidateQueries({ queryKey: QUERY_KEY });
 
   const addMutation = useMutation<
     AddKeyResult,
     Error,
-    { key: string; label?: string }
+    { provider: LlmProvider; key: string; label?: string }
   >({
-    mutationFn: ({ key, label }) => addKeyApi(key, label),
+    mutationFn: ({ provider, key, label }) => addKeyApi(provider, key, label),
     onSuccess: () => {
       void invalidate();
     },
@@ -66,9 +77,9 @@ export function useApiKeys() {
   });
 
   const toggleMutation = useMutation<
-    GeminiApiKey,
+    LlmApiKey,
     Error,
-    { id: string; currentStatus: GeminiApiKey["status"] }
+    { id: string; currentStatus: LlmApiKey["status"] }
   >({
     mutationFn: ({ id, currentStatus }) =>
       updateKeyApi(id, {
@@ -80,7 +91,7 @@ export function useApiKeys() {
   });
 
   const updateLabelMutation = useMutation<
-    GeminiApiKey,
+    LlmApiKey,
     Error,
     { id: string; label: string }
   >({
@@ -105,13 +116,16 @@ export function useApiKeys() {
     refresh: async (): Promise<void> => {
       await query.refetch();
     },
-    addKey: (key: string, label?: string): Promise<AddKeyResult> =>
-      addMutation.mutateAsync({ key, label }),
+    addKey: (
+      provider: LlmProvider,
+      key: string,
+      label?: string,
+    ): Promise<AddKeyResult> => addMutation.mutateAsync({ provider, key, label }),
     verifyKey: (id: string): Promise<VerifyKeyResult> =>
       verifyMutation.mutateAsync(id),
     toggleKey: async (
       id: string,
-      currentStatus: GeminiApiKey["status"],
+      currentStatus: LlmApiKey["status"],
     ): Promise<void> => {
       await toggleMutation.mutateAsync({ id, currentStatus });
     },
@@ -122,6 +136,65 @@ export function useApiKeys() {
       await removeMutation.mutateAsync(id);
     },
   };
+}
+
+/** Provider catalogue + which one runs by default. */
+export function useProviders() {
+  const qc = useQueryClient();
+
+  const query = useQuery<ProvidersResponse, Error>({
+    queryKey: PROVIDERS_KEY,
+    queryFn: getProvidersApi,
+  });
+
+  // Changing the default provider or a model chain also changes what
+  // /api/keys/ reports, so invalidate the whole api-keys tree.
+  const invalidate = () => qc.invalidateQueries({ queryKey: QUERY_KEY });
+
+  const settingsMutation = useMutation<LlmSettings, Error, Partial<LlmSettings>>({
+    mutationFn: (patch) => updateLlmSettingsApi(patch),
+    onSuccess: () => {
+      void invalidate();
+    },
+  });
+
+  const refreshMutation = useMutation<RefreshModelsResult, Error, LlmProvider>({
+    mutationFn: (provider) => refreshProviderModelsApi(provider),
+    onSuccess: () => {
+      void invalidate();
+    },
+  });
+
+  return {
+    providers: query.data?.providers ?? [],
+    defaultProvider: query.data?.defaultProvider ?? "gemini",
+    crossProviderFallback: query.data?.crossProviderFallback ?? true,
+    loading: query.isLoading,
+    error: query.error?.message ?? null,
+    savingSettings: settingsMutation.isPending,
+    refreshingModels: refreshMutation.isPending,
+    setDefaultProvider: async (provider: LlmProvider): Promise<void> => {
+      await settingsMutation.mutateAsync({ defaultProvider: provider });
+    },
+    setCrossProviderFallback: async (enabled: boolean): Promise<void> => {
+      await settingsMutation.mutateAsync({ crossProviderFallback: enabled });
+    },
+    setModelChain: async (
+      provider: LlmProvider,
+      models: string[],
+    ): Promise<void> => {
+      await settingsMutation.mutateAsync({ modelChains: { [provider]: models } });
+    },
+    refreshModels: (provider: LlmProvider): Promise<RefreshModelsResult> =>
+      refreshMutation.mutateAsync(provider),
+  };
+}
+
+export function useLlmSettings() {
+  return useQuery<LlmSettings, Error>({
+    queryKey: ["api-keys", "settings"],
+    queryFn: getLlmSettingsApi,
+  });
 }
 
 export function useKeyUsageHistory(keyId: string | null, days = 30) {

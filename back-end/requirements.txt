@@ -3,7 +3,7 @@ flask
 flask-cors
 flask-sqlalchemy
 python-dotenv
-cryptography  # AES-GCM at-rest encryption for Gemini API keys
+cryptography  # AES-GCM at-rest encryption for LLM API keys
 
 # Image processing
 pillow
@@ -14,10 +14,12 @@ pdfplumber
 pdf2image
 PyMuPDF  # text block bounding boxes for heatmap overlay
 
-# LLM
+# LLM providers
 requests
-google-generativeai  # optional: only if using Gemini provider
-google-genai  # used to verify an API key before it enters the rotation pool
+google-generativeai  # Gemini provider
+google-genai  # Gemini key verification + model listing
+anthropic  # Claude provider
+openai  # OpenAI + every OpenAI-compatible provider (DeepSeek, Groq, xAI, Mistral, OpenRouter)
 
 # Vector database
 chromadb

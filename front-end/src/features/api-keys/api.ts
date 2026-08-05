@@ -3,9 +3,14 @@ import { ApiKeyError } from "./types";
 import type {
   AddKeyResult,
   KeysResponse,
-  GeminiApiKey,
+  LlmApiKey,
+  LlmProvider,
+  LlmSettings,
   KeyUsageHistory,
   PoolUsageHistory,
+  ProviderModel,
+  ProvidersResponse,
+  RefreshModelsResult,
   VerifyKeyResult,
 } from "./types";
 
@@ -57,6 +62,7 @@ export async function getKeysApi(): Promise<KeysResponse> {
 }
 
 export async function addKeyApi(
+  provider: LlmProvider,
   key: string,
   label?: string,
 ): Promise<AddKeyResult> {
@@ -65,12 +71,65 @@ export async function addKeyApi(
     res = await fetch(`${API_URL}/api/keys/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, label }),
+      body: JSON.stringify({ provider, key, label }),
     });
   } catch (err) {
     throw toNetworkError(err, "Không kết nối được backend");
   }
   if (!res.ok) throw await toApiKeyError(res, "Failed to add key");
+  return res.json();
+}
+
+export async function getProvidersApi(): Promise<ProvidersResponse> {
+  const res = await fetch(`${API_URL}/api/keys/providers`);
+  if (!res.ok) throw await toApiKeyError(res, "Failed to fetch providers");
+  return res.json();
+}
+
+export async function getLlmSettingsApi(): Promise<LlmSettings> {
+  const res = await fetch(`${API_URL}/api/keys/settings`);
+  if (!res.ok) throw await toApiKeyError(res, "Failed to fetch LLM settings");
+  return res.json();
+}
+
+export async function updateLlmSettingsApi(
+  patch: Partial<LlmSettings>,
+): Promise<LlmSettings> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/api/keys/settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+  } catch (err) {
+    throw toNetworkError(err, "Không kết nối được backend");
+  }
+  if (!res.ok) throw await toApiKeyError(res, "Failed to update LLM settings");
+  return res.json();
+}
+
+export async function refreshProviderModelsApi(
+  provider: LlmProvider,
+): Promise<RefreshModelsResult> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `${API_URL}/api/keys/providers/${provider}/models/refresh`,
+      { method: "POST" },
+    );
+  } catch (err) {
+    throw toNetworkError(err, "Không kết nối được backend");
+  }
+  if (!res.ok) throw await toApiKeyError(res, "Failed to refresh models");
+  return res.json();
+}
+
+export async function getProviderModelsApi(
+  provider: LlmProvider,
+): Promise<ProviderModel[]> {
+  const res = await fetch(`${API_URL}/api/keys/models?provider=${provider}`);
+  if (!res.ok) throw await toApiKeyError(res, "Failed to fetch models");
   return res.json();
 }
 
@@ -88,7 +147,7 @@ export async function verifyKeyApi(id: string): Promise<VerifyKeyResult> {
 export async function updateKeyApi(
   id: string,
   data: { label?: string; status?: "active" | "disabled" },
-): Promise<GeminiApiKey> {
+): Promise<LlmApiKey> {
   let res: Response;
   try {
     res = await fetch(`${API_URL}/api/keys/${id}`, {

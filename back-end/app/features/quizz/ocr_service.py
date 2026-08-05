@@ -1,10 +1,12 @@
 """
-OCR Service - Extract text from images using Gemini Vision API
+OCR Service - Extract text from images with the configured LLM provider's
+vision endpoint.
 
-Uses the shared Gemini key pool (key_manager) for key rotation.
-Tries models in order: gemini-2.5-flash → gemini-2.5-flash-lite → gemini-2.0-flash
-On rate-limit (429), falls back to the next model; on full exhaustion, tries the next
-available key from the pool.
+Key rotation is a loop rather than a single pick: when every model of one key is
+rate-limited, the next key is tried, and `select_credential` walks on to the
+next provider once a provider's keys are used up. Providers without vision
+(DeepSeek, Groq) are skipped by the selector, so a text-only key never produces
+a confusing "unsupported image" error here.
 """
 
 import os
@@ -12,9 +14,16 @@ import base64
 import logging
 import mimetypes
 
-logger = logging.getLogger(__name__)
+from app.features.llm import (
+    AllModelsExhaustedError,
+    NoCredentialError,
+    record_failure,
+    record_usage,
+    select_credential,
+    vision_with_fallback,
+)
 
-_FALLBACK_CHAIN = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
+logger = logging.getLogger(__name__)
 
 _OCR_PROMPT = {
     "vi": (
@@ -32,7 +41,7 @@ _OCR_PROMPT = {
 
 def extract_text_from_image(image_path: str, lang: str = "vi") -> str:
     """
-    Extract text from a single image using Gemini Vision API.
+    Extract text from a single image using a vision-capable LLM.
 
     Args:
         image_path: Path to the image file
@@ -43,13 +52,10 @@ def extract_text_from_image(image_path: str, lang: str = "vi") -> str:
 
     Raises:
         FileNotFoundError: if the file does not exist
-        RuntimeError: if no API keys are available or all models fail
+        RuntimeError: if no vision-capable key is available or all models fail
     """
     if not os.path.exists(image_path):
         raise FileNotFoundError(f"Image file not found: {image_path}")
-
-    import google.generativeai as genai
-    from app.features.api_keys.key_manager import get_optimal_key, record_success, record_error
 
     mime_type = mimetypes.guess_type(image_path)[0] or "image/png"
     with open(image_path, "rb") as fh:
@@ -59,65 +65,37 @@ def extract_text_from_image(image_path: str, lang: str = "vi") -> str:
     tried_key_ids: list[str] = []
 
     while True:
-        key_obj = get_optimal_key(exclude_ids=tried_key_ids)
-        if not key_obj:
+        cred = select_credential(exclude_key_ids=tried_key_ids, require_vision=True)
+        if cred is None:
             suffix = f" (đã thử {len(tried_key_ids)} key)" if tried_key_ids else ""
-            raise RuntimeError(
-                f"Không có Gemini API key khả dụng{suffix}. Vào Settings > API Keys để thêm key."
+            raise NoCredentialError(
+                f"Không có API key hỗ trợ đọc ảnh{suffix}. "
+                "Vào Settings > API Keys để thêm key Gemini, Claude hoặc OpenAI."
             )
 
-        tried_key_ids.append(key_obj.id)
-        genai.configure(api_key=key_obj.key)
-        any_rate_limited = False
+        tried_key_ids.append(cred.key_id)
+        try:
+            result = vision_with_fallback(cred, prompt, b64_data, mime_type)
+        except AllModelsExhaustedError as exc:
+            record_failure(cred, str(exc), is_rate_limit=True)
+            logger.warning("All %s models rate-limited for key …%s — trying another key",
+                           cred.provider, cred.key_id[-6:])
+            continue
+        except Exception as exc:
+            # Non-quota error (invalid key, content policy, …) — stop immediately.
+            record_failure(cred, str(exc))
+            raise
 
-        for model_name in _FALLBACK_CHAIN:
-            try:
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content([
-                    {"inline_data": {"mime_type": mime_type, "data": b64_data}},
-                    prompt,
-                ])
-                extracted = (response.text or "").strip()
-
-                input_tok = output_tok = 0
-                try:
-                    usage = response.usage_metadata
-                    if usage:
-                        input_tok = getattr(usage, "prompt_token_count", 0) or 0
-                        output_tok = getattr(usage, "candidates_token_count", 0) or 0
-                except Exception:
-                    pass
-
-                record_success(key_obj.id, input_tok, output_tok)
-                logger.info(
-                    "Gemini OCR (%s): %d chars from %s",
-                    model_name, len(extracted), os.path.basename(image_path),
-                )
-                return extracted
-
-            except Exception as e:
-                err_str = str(e).lower()
-                is_rate_limit = (
-                    "429" in err_str
-                    or "resource_exhausted" in err_str
-                    or "resourceexhausted" in err_str
-                )
-                record_error(key_obj.id, str(e)[:500], is_rate_limit=is_rate_limit)
-                logger.warning(
-                    "Gemini %s OCR failed (key …%s): %s",
-                    model_name, key_obj.id[-6:], str(e)[:120],
-                )
-                if not is_rate_limit:
-                    # Non-quota error (invalid key, content policy, etc.) — stop immediately
-                    raise
-                any_rate_limited = True
-                # Rate-limit: try the next model in the chain
-
-        if any_rate_limited:
-            # All models rate-limited for this key — try the next available key
-            logger.warning(
-                "All models rate-limited for key …%s, trying another key…", key_obj.id[-6:]
-            )
+        record_usage(cred, result.input_tokens, result.output_tokens,
+                     model_stats={result.model: {
+                         "requests": 1,
+                         "input_tokens": result.input_tokens,
+                         "output_tokens": result.output_tokens,
+                     }})
+        logger.info("OCR via %s/%s: %d chars from %s",
+                    cred.provider, result.model, len(result.text),
+                    os.path.basename(image_path))
+        return result.text
 
 
 def extract_text_from_images(image_paths: list[str], lang: str = "vi") -> str:

@@ -108,7 +108,7 @@ authenticated *before* the code is examined, so the two failures are distinct.
 A rejection **from the provider** blocks the save. Our own inability to reach the provider
 never does — it stores the credential and says so, so a dropped connection cannot lock
 anyone out of configuring the app. Same rule as
-[`api_keys/verifier.py`](../back-end/app/features/api_keys/verifier.py).
+[`llm/catalog.py`](../back-end/app/features/llm/catalog.py).
 
 Saving a **different client ID** deletes the stored connection: its tokens were issued by
 the previous OAuth app and can never be refreshed.

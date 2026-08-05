@@ -1,15 +1,19 @@
 """
-Quiz Generator Service - Generate quiz questions using Google Gemini
+Quiz Generator Service - Generate quiz questions with whichever LLM provider
+the user configured (see `app.features.llm`).
 
 Optimization strategy (Lost-in-the-Middle fix):
   ┌──────────────────────────────────────────────────────────┐
-  │  text ≤ 8 000 chars  → single Gemini call  (fast)        │
+  │  text ≤ 8 000 chars  → single LLM call  (fast)           │
   │  text > 8 000 chars  → multi-chunk parallel calls        │
   │    • split into ≤4 chunks of ≤7 000 chars each           │
   │    • generate questions from each chunk in parallel       │
   │    • deduplicate + merge to exactly num_questions         │
   │    • coverage map injected into each chunk prompt         │
   └──────────────────────────────────────────────────────────┘
+
+Chunks run on a ThreadPoolExecutor with no Flask app context, so everything
+below takes an already-selected `LlmCredential` and never touches the DB.
 """
 
 import copy
@@ -24,6 +28,8 @@ import datetime
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from app.features.llm import LlmCredential, generate_with_fallback, stream_with_fallback
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -32,13 +38,13 @@ logger = logging.getLogger(__name__)
 # Below this size → single call; above → multi-chunk parallel generation
 _SINGLE_CALL_THRESHOLD = 8_000   # chars
 
-# Each chunk sent to Gemini will be at most this many chars
+# Each chunk sent to the model will be at most this many chars
 _MAX_CHUNK_SIZE = 7_000           # chars
 
 # Overlap between adjacent chunks (context continuity at boundaries)
 _CHUNK_OVERLAP = 500              # chars
 
-# Maximum parallel Gemini calls (avoids hammering quota)
+# Maximum parallel LLM calls (avoids hammering quota)
 _MAX_PARALLEL_CHUNKS = 6
 
 # Maximum questions per single API call — Vietnamese JSON is ~400 tokens/question;
@@ -115,254 +121,6 @@ def _calc_max_output_tokens(num_questions: int, question_type: str) -> int:
     """
     estimated = num_questions * 500  # generous per-question estimate
     return min(65_536, max(8_192, estimated))
-
-
-def _classify_429(err: Exception) -> tuple[bool, bool, bool]:
-    """Classify a Gemini exception as (is_429, is_rpm, is_rpd)."""
-    err_str = str(err).lower()
-    is_429 = "429" in err_str or "resource_exhausted" in err_str or "resourceexhausted" in err_str
-    is_rpm = any(kw in err_str for kw in ("per minute", "rpm", "rate limit", "minute"))
-    is_rpd = any(kw in err_str for kw in ("per day", "rpd", "daily", "quota"))
-    return is_429, is_rpm, is_rpd
-
-
-def _chunk_delta_text(chunk) -> str:
-    """
-    Text carried by one streaming chunk, or "" when it carries none.
-
-    Never use `chunk.text` here — it raises ValueError for chunks that hold only
-    finish_reason / usage_metadata and no parts, which would abort the stream.
-    """
-    try:
-        candidates = getattr(chunk, "candidates", None) or []
-        if not candidates:
-            return ""
-        parts = getattr(candidates[0].content, "parts", None) or []
-        return "".join(getattr(p, "text", "") or "" for p in parts)
-    except Exception:
-        return ""
-
-
-def _read_usage(source, usage: dict) -> None:
-    """Fold usage_metadata into `usage`. Gemini reports cumulative totals per chunk."""
-    try:
-        meta = getattr(source, "usage_metadata", None)
-        if not meta:
-            return
-        prompt_tokens = getattr(meta, "prompt_token_count", 0) or 0
-        output_tokens = getattr(meta, "candidates_token_count", 0) or 0
-        if prompt_tokens:
-            usage["input_tokens"] = prompt_tokens
-        if output_tokens:
-            usage["output_tokens"] = max(usage["output_tokens"], output_tokens)
-    except Exception:
-        pass
-
-
-def _generate_with_fallback(
-    prompt: str,
-    api_key: str,
-    model_chain: list[str],
-    **kwargs,
-) -> tuple[str, str, dict]:
-    """
-    Call Gemini API with automatic model fallback on 429 errors.
-
-    Extra kwargs:
-        max_output_tokens: override for generation config (default 16384)
-
-    Returns:
-        (raw_text, model_used, token_info)
-        token_info: {"input_tokens": int, "output_tokens": int}
-    Raises:
-        RuntimeError: when all models in the chain are exhausted.
-    """
-    import time
-    import google.generativeai as genai
-
-    genai.configure(api_key=api_key)
-
-    last_err: Exception | None = None
-    for model_name in model_chain:
-        rpm_retried = False
-        while True:
-            try:
-                logger.info("Calling Gemini model: %s", model_name)
-                max_out = kwargs.get("max_output_tokens", 16_384)
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.3,
-                        max_output_tokens=max_out,
-                    ),
-                )
-                raw = (response.text or "").strip()
-                logger.info("Gemini %s response: %d chars", model_name, len(raw))
-
-                token_info = {"input_tokens": 0, "output_tokens": 0}
-                try:
-                    usage = response.usage_metadata
-                    if usage:
-                        token_info["input_tokens"] = getattr(usage, "prompt_token_count", 0) or 0
-                        token_info["output_tokens"] = getattr(usage, "candidates_token_count", 0) or 0
-                except Exception:
-                    pass
-
-                return raw, model_name, token_info
-
-            except Exception as e:
-                is_429, is_rpm, is_rpd = _classify_429(e)
-
-                if not is_429:
-                    raise
-
-                last_err = e
-
-                if is_rpm and not rpm_retried:
-                    logger.warning(
-                        "Model %s hit RPM limit. Waiting 65 s then retrying...", model_name
-                    )
-                    time.sleep(65)
-                    rpm_retried = True
-                    continue
-
-                quota_type = "RPD daily" if is_rpd else "quota"
-                logger.warning(
-                    "Model %s %s limit hit. Trying next model... (error: %s)",
-                    model_name, quota_type, str(e)[:120],
-                )
-                break
-
-    raise RuntimeError(
-        f"All Gemini models exhausted (tried: {', '.join(model_chain)}). "
-        f"Last error: {last_err}"
-    )
-
-
-def _stream_with_fallback(
-    prompt: str,
-    api_key: str,
-    model_chain: list[str],
-    on_text,
-    on_notice=None,
-    stop_event=None,
-    **kwargs,
-) -> tuple[str, str, dict]:
-    """
-    Streaming twin of _generate_with_fallback — same model-fallback and RPM-retry
-    behaviour, but text is handed to `on_text(delta)` as it arrives.
-
-    on_notice(code, data): non-fatal events worth showing the user
-        ("rpmWait" with retryInSeconds, "modelFallback" with from/to).
-    stop_event: threading.Event — stop consuming the stream once it is set.
-
-    Returns (raw_text, model_used, token_info), the same contract as the blocking
-    version, so callers can still run _parse_response() over the raw text.
-    """
-    import time
-    import google.generativeai as genai
-
-    genai.configure(api_key=api_key)
-
-    def _notice(code: str, data: dict) -> None:
-        if on_notice:
-            try:
-                on_notice(code, data)
-            except Exception:
-                pass
-
-    last_err: Exception | None = None
-    for model_index, model_name in enumerate(model_chain):
-        rpm_retried = False
-        while True:
-            parts: list[str] = []
-            usage = {"input_tokens": 0, "output_tokens": 0}
-            try:
-                logger.info("Streaming from Gemini model: %s", model_name)
-                max_out = kwargs.get("max_output_tokens", 16_384)
-                model = genai.GenerativeModel(model_name)
-                stream = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.3,
-                        max_output_tokens=max_out,
-                    ),
-                    stream=True,
-                )
-                stopped_early = False
-                for chunk in stream:
-                    _read_usage(chunk, usage)
-                    delta = _chunk_delta_text(chunk)
-                    if delta:
-                        parts.append(delta)
-                        on_text(delta)
-                    if stop_event is not None and stop_event.is_set():
-                        logger.info("Stopping %s stream early — quota already reached", model_name)
-                        stopped_early = True
-                        break
-                if not stopped_early:
-                    _read_usage(stream, usage)
-
-                raw = "".join(parts).strip()
-                logger.info("Gemini %s stream: %d chars", model_name, len(raw))
-                return raw, model_name, usage
-
-            except Exception as e:
-                if parts:
-                    # Text already reached the caller. Retrying would resend the same
-                    # prompt and duplicate questions, so keep the partial result.
-                    logger.warning(
-                        "Gemini %s stream failed after %d chars — keeping partial: %s",
-                        model_name, sum(len(p) for p in parts), e,
-                    )
-                    return "".join(parts).strip(), model_name, usage
-
-                is_429, is_rpm, is_rpd = _classify_429(e)
-                if not is_429:
-                    raise
-
-                last_err = e
-
-                if is_rpm and not rpm_retried:
-                    if stop_event is not None and stop_event.is_set():
-                        logger.info(
-                            "Model %s: skipping RPM retry — quota already reached", model_name
-                        )
-                        return "", model_name, usage
-
-                    logger.warning(
-                        "Model %s hit RPM limit. Waiting 65 s then retrying...", model_name
-                    )
-                    _notice("rpmWait", {"model": model_name, "retryInSeconds": 65})
-                    # Interruptible: when another chunk fills the quota mid-wait the
-                    # job has to end now, not 65 s later — the client keeps the run
-                    # marked in-progress until this call returns.
-                    if stop_event is not None:
-                        if stop_event.wait(65):
-                            logger.info(
-                                "Model %s: RPM retry abandoned — quota reached while waiting",
-                                model_name,
-                            )
-                            return "", model_name, usage
-                    else:
-                        time.sleep(65)
-                    rpm_retried = True
-                    continue
-
-                quota_type = "RPD daily" if is_rpd else "quota"
-                logger.warning(
-                    "Model %s %s limit hit. Trying next model... (error: %s)",
-                    model_name, quota_type, str(e)[:120],
-                )
-                if model_index + 1 < len(model_chain):
-                    _notice("modelFallback", {"from": model_name, "to": model_chain[model_index + 1]})
-                break
-
-    raise RuntimeError(
-        f"All Gemini models exhausted (tried: {', '.join(model_chain)}). "
-        f"Last error: {last_err}"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -655,10 +413,17 @@ class _QuestionSink:
             return True
 
 
+def _unpack(result) -> tuple[str, str, dict]:
+    """LlmResult → the (raw, model, token_info) triple this module passes around."""
+    return result.text, result.model, {
+        "input_tokens": result.input_tokens,
+        "output_tokens": result.output_tokens,
+    }
+
+
 def _run_chunk_call(
     prompt: str,
-    api_key: str,
-    model_chain: list[str],
+    cred: LlmCredential,
     max_out: int,
     question_type: str,
     sink: "_QuestionSink | None",
@@ -667,7 +432,7 @@ def _run_chunk_call(
     parse_all=None,
 ) -> tuple[list[dict], str, dict, str, ValueError | None]:
     """
-    One Gemini call for one chunk, streaming when a sink is present.
+    One LLM call for one chunk, streaming when a sink is present.
 
     validate / parse_all default to the generate-mode pair; import mode passes
     its own lenient equivalents.
@@ -685,9 +450,10 @@ def _run_chunk_call(
             return _parse_response(raw_text, question_type)
 
     if sink is None:
-        raw, model_used, tok = _generate_with_fallback(
-            prompt, api_key, model_chain, max_output_tokens=max_out
+        result = generate_with_fallback(
+            cred, prompt, max_output_tokens=max_out, on_notice=on_notice,
         )
+        raw, model_used, tok = _unpack(result)
         try:
             return parse_all(raw), model_used, tok, raw, None
         except ValueError as e:
@@ -706,15 +472,14 @@ def _run_chunk_call(
             collected.append(validated)
             sink.offer(validated)
 
-    raw, model_used, tok = _stream_with_fallback(
+    raw, model_used, tok = _unpack(stream_with_fallback(
+        cred,
         prompt,
-        api_key,
-        model_chain,
         on_text=_on_text,
         on_notice=on_notice,
         stop_event=sink.quota_reached,
         max_output_tokens=max_out,
-    )
+    ))
 
     if not collected:
         # Nothing parsed incrementally — fall back to the batch parser over the
@@ -739,8 +504,7 @@ def _generate_multi_chunk(
     question_type: str,
     difficulty: str,
     language: str,
-    gemini_api_key: str,
-    model_chain: list[str],
+    cred: LlmCredential,
     sink: "_QuestionSink | None" = None,
     on_notice=None,
 ) -> tuple[list[dict], dict]:
@@ -850,7 +614,7 @@ def _generate_multi_chunk(
                     idx + 1, n, attempt + 1, cur_quota,
                 )
             qs, model_used, tok, raw, parse_err = _run_chunk_call(
-                prompt, gemini_api_key, model_chain, max_tok, question_type,
+                prompt, cred, max_tok, question_type,
                 sink, on_notice,
             )
             in_tok = tok.get("input_tokens", 0)
@@ -955,16 +719,16 @@ def generate_quiz(
     question_type: str = "multiple-choice",
     difficulty: str = "medium",
     language: str = "vi",
-    gemini_api_key: str = "",
-    model_chain: list[str] | None = None,
+    *,
+    cred: LlmCredential,
     on_question=None,
     on_notice=None,
 ) -> tuple[list[dict], dict]:
     """
-    Generate quiz questions from text using Google Gemini.
+    Generate quiz questions from text using the configured LLM provider.
 
     on_question(question, number): when given, questions are streamed to this
-        callback one at a time as Gemini writes them, instead of only being
+        callback one at a time as the model writes them, instead of only being
         returned at the end.  Numbering, dedup and the question cap then belong
         to the sink, so callers see the same list either way.
     on_notice(code, data): non-fatal progress notices ("rpmWait", "modelFallback",
@@ -974,8 +738,6 @@ def generate_quiz(
         (questions, token_usage)
         token_usage: {"input_tokens": int, "output_tokens": int, "total_tokens": int}
     """
-    if not model_chain:
-        model_chain = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
 
     sink = (
         _QuestionSink(num_questions, on_question, dedupe=len(text) > _SINGLE_CALL_THRESHOLD)
@@ -1011,7 +773,7 @@ def generate_quiz(
             )
             questions, chunk_tokens = _generate_multi_chunk(
                 text, num_questions, question_type, difficulty, language,
-                gemini_api_key, model_chain, sink=sink, on_notice=on_notice,
+                cred, sink=sink, on_notice=on_notice,
             )
             token_usage["input_tokens"] = chunk_tokens.get("input_tokens", 0)
             token_usage["output_tokens"] = chunk_tokens.get("output_tokens", 0)
@@ -1047,7 +809,7 @@ def generate_quiz(
                         + already_asked
                     )
                     topup_qs, model_topup, tok_topup, _raw_topup, topup_parse_err = _run_chunk_call(
-                        topup_prompt, gemini_api_key, model_chain, topup_max_tok,
+                        topup_prompt, cred, topup_max_tok,
                         question_type, sink, on_notice,
                     )
                     if topup_parse_err is not None:
@@ -1086,7 +848,7 @@ def generate_quiz(
                 ),
             )
             questions, model_used, tok, raw_text, parse_err = _run_chunk_call(
-                prompt, gemini_api_key, model_chain, 16_384,
+                prompt, cred, 16_384,
                 question_type, sink, on_notice,
             )
             _save_debug_file("response", raw_text, meta=f"# model={model_used}")
@@ -1173,13 +935,13 @@ Nội dung văn bản gốc:
 def import_quiz_from_text(
     text: str,
     language: str = "vi",
-    gemini_api_key: str = "",
-    model_chain: list[str] | None = None,
+    *,
+    cred: LlmCredential,
     on_question=None,
     on_notice=None,
 ) -> tuple[list[dict], dict]:
     """
-    Extract existing quiz questions from text using Google Gemini.
+    Extract existing quiz questions from text using the configured LLM provider.
 
     Unlike generate_quiz(), this function does NOT create new questions.
     It extracts and parses existing Q&A content from the source text.
@@ -1190,8 +952,6 @@ def import_quiz_from_text(
     Returns:
         (questions, token_usage)
     """
-    if not model_chain:
-        model_chain = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
 
     sink = _QuestionSink(_IMPORT_QUESTION_CAP, on_question) if on_question else None
 
@@ -1237,7 +997,7 @@ def import_quiz_from_text(
             for attempt in range(3):
                 try:
                     qs, model_used, tok, raw, parse_err = _run_chunk_call(
-                        prompt, gemini_api_key, model_chain, max_tok, "multiple-choice",
+                        prompt, cred, max_tok, "multiple-choice",
                         sink, on_notice,
                         validate=_validate_import_question,
                         parse_all=_parse_import_response,

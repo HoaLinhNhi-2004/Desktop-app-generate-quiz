@@ -164,6 +164,63 @@ def _m_009_integration_credentials(cursor: sqlite3.Cursor) -> None:
     )
 
 
+def _m_010_multi_provider_llm(cursor: sqlite3.Cursor) -> None:
+    """Multi-provider LLM support: tag every key with its vendor, cache the
+    per-provider model catalogue, and add a key/value store for preferences.
+
+    Existing rows are Gemini keys by definition — the DEFAULT backfills them.
+    """
+    _add_column_if_missing(
+        cursor, "gemini_api_keys", "provider",
+        "provider VARCHAR(32) NOT NULL DEFAULT 'gemini'",
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS ix_gemini_api_keys_provider "
+        "ON gemini_api_keys(provider)"
+    )
+    _add_column_if_missing(
+        cursor, "gemini_api_key_daily_usage", "provider",
+        "provider VARCHAR(32) NOT NULL DEFAULT 'gemini'",
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS ix_daily_usage_provider "
+        "ON gemini_api_key_daily_usage(provider)"
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS llm_provider_models (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider VARCHAR(32) NOT NULL,
+            model VARCHAR(160) NOT NULL,
+            display_name VARCHAR(255) DEFAULT '',
+            rank INTEGER NOT NULL DEFAULT 0,
+            rpd INTEGER NOT NULL DEFAULT 0,
+            rpm INTEGER NOT NULL DEFAULT 0,
+            tpm INTEGER NOT NULL DEFAULT 0,
+            tier VARCHAR(16) DEFAULT 'unknown',
+            fetched_at DATETIME
+        )
+        """
+    )
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_model "
+        "ON llm_provider_models(provider, model)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS ix_llm_provider_models_provider "
+        "ON llm_provider_models(provider)"
+    )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key VARCHAR(64) PRIMARY KEY,
+            value TEXT DEFAULT '',
+            updated_at DATETIME
+        )
+        """
+    )
+
+
 MIGRATIONS: List[Migration] = [
     ("002_api_keys_extras", "API keys: model_usage + key_hash + unique index", _m_002_api_keys_extras),
     ("003_folder_extras", "Folders: is_favorite + last_accessed_at", _m_003_folder_extras),
@@ -173,6 +230,7 @@ MIGRATIONS: List[Migration] = [
     ("007_api_key_daily_usage", "API keys: per-day usage table for history & RPD tracking", _m_007_api_key_daily_usage),
     ("008_integration_connections", "Integrations: OAuth connections for Google Drive / Notion", _m_008_integration_connections),
     ("009_integration_credentials", "Integrations: user-supplied OAuth app credentials", _m_009_integration_credentials),
+    ("010_multi_provider_llm", "LLM: provider column, model catalogue cache, app settings", _m_010_multi_provider_llm),
 ]
 
 

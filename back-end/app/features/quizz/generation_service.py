@@ -473,16 +473,19 @@ def run_generation(payload: dict, emit=_noop) -> dict:
     saved_paths = payload["savedPaths"]
     streaming = emit is not _noop
 
-    from app.features.api_keys.key_manager import get_optimal_key
-    key_obj = get_optimal_key()
-    if not key_obj:
-        raise RuntimeError("Chưa có Gemini API key. Vào trang API Keys (Settings) để thêm key.")
-    gemini_key, active_key_id = key_obj.key, key_obj.id
-
-    fallback_chain = current_app.config.get(
-        "GEMINI_FALLBACK_CHAIN",
-        ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"],
+    from app.features.llm import (
+        AllModelsExhaustedError,
+        NoCredentialError,
+        record_failure,
+        record_usage,
+        require_credential,
+        select_credential,
     )
+
+    try:
+        cred = require_credential()
+    except NoCredentialError as exc:
+        raise RuntimeError(str(exc)) from exc
 
     persisted_paths: set[str] = set()
     try:
@@ -535,6 +538,33 @@ def run_generation(payload: dict, emit=_noop) -> dict:
         on_question = _on_question if streaming else None
         on_notice = _on_notice if streaming else None
 
+        def _with_provider_fallback(run):
+            """Run `run(cred)`, moving to the next provider when one runs dry.
+
+            Only quota exhaustion triggers a switch: a bad prompt or a revoked
+            key would fail identically everywhere, and retrying it across four
+            providers just quadruples how long the failure takes to surface.
+            """
+            nonlocal cred
+            tried: list[str] = []
+            while True:
+                try:
+                    return run(cred), cred
+                except AllModelsExhaustedError as exhausted:
+                    tried.append(cred.key_id)
+                    record_failure(cred, str(exhausted), is_rate_limit=True)
+                    nxt = select_credential(exclude_key_ids=tried)
+                    if nxt is None:
+                        raise RuntimeError(
+                            "Mọi API key đã hết quota. Thêm key mới hoặc đổi provider "
+                            "ở Settings > API Keys."
+                        ) from exhausted
+                    logger.warning("Provider %s exhausted — falling back to %s",
+                                   cred.provider, nxt.provider)
+                    emit("notice", {"code": "providerFallback",
+                                    "from": cred.provider, "to": nxt.provider})
+                    cred = nxt
+
         if action == "import":
             from app.features.quizz.text_processing import clean_text
             from app.features.quizz.quiz_generator import import_quiz_from_text
@@ -549,13 +579,14 @@ def run_generation(payload: dict, emit=_noop) -> dict:
             emit("stage", {"stage": "generating"})
             # Import sends the FULL text (not filtered/chunked) so question
             # numbering and answer markers survive.
-            questions, token_usage = import_quiz_from_text(
-                text=combined_text,
-                language=config.get("language", "vi"),
-                gemini_api_key=gemini_key,
-                model_chain=fallback_chain,
-                on_question=on_question,
-                on_notice=on_notice,
+            (questions, token_usage), used_cred = _with_provider_fallback(
+                lambda active: import_quiz_from_text(
+                    text=combined_text,
+                    language=config.get("language", "vi"),
+                    cred=active,
+                    on_question=on_question,
+                    on_notice=on_notice,
+                )
             )
         else:
             quality_error, config["numberOfQuestions"] = validate_text_quality(
@@ -575,9 +606,7 @@ def run_generation(payload: dict, emit=_noop) -> dict:
                     len(combined_text),
                 )
                 emit("stage", {"stage": "analyzing", "detail": "summarizing"})
-                quiz_text = summarize_transcript(
-                    combined_text, api_key=gemini_key, model_chain=fallback_chain,
-                )
+                quiz_text = summarize_transcript(combined_text, cred=cred)
                 cleaned = quiz_text
             else:
                 emit("stage", {"stage": "analyzing"})
@@ -597,29 +626,26 @@ def run_generation(payload: dict, emit=_noop) -> dict:
             emit("stage", {"stage": "generating", "total": config["numberOfQuestions"]})
 
             from app.features.quizz.quiz_generator import generate_quiz as gen_quiz
-            questions, token_usage = gen_quiz(
-                text=quiz_text,
-                num_questions=config["numberOfQuestions"],
-                question_type=config["questionType"],
-                difficulty=config["difficulty"],
-                language=config["language"],
-                gemini_api_key=gemini_key,
-                model_chain=fallback_chain,
-                on_question=on_question,
-                on_notice=on_notice,
+            (questions, token_usage), used_cred = _with_provider_fallback(
+                lambda active: gen_quiz(
+                    text=quiz_text,
+                    num_questions=config["numberOfQuestions"],
+                    question_type=config["questionType"],
+                    difficulty=config["difficulty"],
+                    language=config["language"],
+                    cred=active,
+                    on_question=on_question,
+                    on_notice=on_notice,
+                )
             )
 
-        if active_key_id and token_usage:
-            try:
-                from app.features.api_keys.key_manager import record_success
-                record_success(
-                    active_key_id,
-                    token_usage.get("input_tokens", 0),
-                    token_usage.get("output_tokens", 0),
-                    model_stats=token_usage.get("models"),
-                )
-            except Exception as track_err:
-                logger.warning("Could not track key usage: %s", track_err)
+        if token_usage:
+            record_usage(
+                used_cred,
+                token_usage.get("input_tokens", 0),
+                token_usage.get("output_tokens", 0),
+                model_stats=token_usage.get("models"),
+            )
 
         emit("stage", {"stage": "saving"})
         quiz_set_id, page_distribution, persisted_paths = _persist(payload, questions, streaming)
@@ -635,6 +661,7 @@ def run_generation(payload: dict, emit=_noop) -> dict:
             "config": config,
             "inputType": input_type,
             "tokenUsage": token_usage,
+            "provider": used_cred.provider,
             "pageDistribution": page_distribution,
         }
 

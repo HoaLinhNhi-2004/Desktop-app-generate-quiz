@@ -20,7 +20,7 @@
   },
   "header": {
     "settingsTitle": "Cài đặt API Keys",
-    "settingsDescription": "Quản lý các Gemini API key dùng để tạo quiz."
+    "settingsDescription": "Quản lý các API key (Gemini, Claude, OpenAI…) dùng để tạo quiz."
   },
   "home": {
     "loading": "Đang tải thư mục...",
@@ -82,19 +82,19 @@
       "description": "Đã thử gemini-2.5-flash → gemini-2.5-flash-lite → gemini-2.0-flash, tất cả đều hết quota miễn phí hôm nay. Quota reset lúc 00:00 giờ Mỹ (khoảng 12:00-15:00 giờ Việt Nam). Thử lại sau!"
     },
     "quotaExceeded": {
-      "title": "Vượt giới hạn Gemini API",
-      "description": "Tài khoản đã hết quota miễn phí cho model Gemini.",
+      "title": "Vượt giới hạn API",
+      "description": "Mọi key của provider đang dùng đều đã hết quota.",
       "retryIn": "Vui lòng thử lại sau {{seconds}} giây.",
       "retryLater": "Vui lòng thử lại sau ít phút.",
       "checkBilling": "Kiểm tra billing tại ai.google.dev."
     },
     "noApiKey": {
       "title": "Chưa có API Key",
-      "description": "Vào trang API Keys (nút trên header) để thêm Gemini API key."
+      "description": "Vào trang API Keys (nút trên header) để thêm API key."
     },
     "invalidApiKey": {
       "title": "API Key không hợp lệ",
-      "description": "Gemini API key sai hoặc đã hết hạn. Kiểm tra lại key trong trang API Keys."
+      "description": "API key sai hoặc đã hết hạn. Kiểm tra lại key trong trang API Keys."
     },
     "noTextExtracted": {
       "title": "Không trích xuất được văn bản",
@@ -193,7 +193,7 @@
         "analyzing": "Phân tích nội dung",
         "analyzingDesc": "Làm sạch và chọn đoạn quan trọng…",
         "generating": "AI tạo câu hỏi",
-        "generatingDesc": "Gemini đang soạn câu hỏi…",
+        "generatingDesc": "AI đang soạn câu hỏi…",
         "saving": "Đang lưu",
         "savingDesc": "Ghi bộ câu hỏi vào thư mục…",
         "queued": "Chờ tới lượt",
@@ -481,31 +481,37 @@
     "keyAlreadyExists": "Key đã tồn tại",
     "addKeyButton": "Thêm Key",
     "addKeyDialog": {
-      "title": "Thêm Gemini API Key",
-      "description": "Nhập API key từ Google AI Studio. Key được kiểm tra với Google trước khi lưu.",
+      "title": "Thêm API Key",
+      "description": "Chọn provider rồi dán API key. Key được kiểm tra với provider trước khi lưu.",
       "labelField": "Nhãn (tùy chọn)",
       "labelPlaceholder": "VD: Account chính, Account phụ...",
       "cancelButton": "Hủy",
       "addingButton": "Đang kiểm tra key...",
-      "addButton": "Thêm key"
+      "addButton": "Thêm key",
+      "providerField": "Provider",
+      "getKeyLink": "Lấy key tại trang quản lý của {{provider}}"
     },
     "keyErrors": {
       "empty": "Vui lòng nhập API key",
-      "invalid_format": "Key sai định dạng — key Google AI Studio bắt đầu bằng \"AIza\" và không chứa khoảng trắng. Kiểm tra lại xem có copy thiếu/thừa ký tự không.",
-      "invalid_key": "Google từ chối key này. Key có thể đã bị xoá hoặc thu hồi — tạo key mới tại aistudio.google.com/apikey.",
+      "invalid_format": "Key sai định dạng cho provider đã chọn. Kiểm tra lại xem có copy thiếu/thừa ký tự, hoặc chọn nhầm provider không.",
+      "invalid_key": "Provider từ chối key này. Key có thể đã bị xoá hoặc thu hồi — tạo key mới ở trang quản lý của provider.",
       "api_disabled": "Project của key này chưa bật Generative Language API. Vào Google Cloud Console bật API rồi thử lại.",
-      "permission_denied": "Key không có quyền gọi Generative Language API (có thể đang bị giới hạn theo API hoặc theo IP).",
-      "rejected": "Google từ chối key này",
+      "permission_denied": "Key không có quyền gọi API sinh nội dung (có thể đang bị giới hạn theo API hoặc theo IP).",
+      "rejected": "Provider từ chối key này",
       "duplicate": "Key này đã có trong danh sách rồi",
       "decrypt_failed": "Không giải mã được key đã lưu trên máy này. Hãy xoá key và thêm lại.",
       "network_unreachable": "Không kết nối được backend. Kiểm tra backend đã chạy ở cổng 5000 chưa.",
-      "internal_error": "Backend gặp lỗi không mong muốn — xem log backend để biết chi tiết."
+      "internal_error": "Backend gặp lỗi không mong muốn — xem log backend để biết chi tiết.",
+      "unknown_provider": "Provider không được hỗ trợ",
+      "no_key": "Cần thêm key cho provider này trước khi tải lại danh sách model",
+      "refresh_failed": "Không tải được danh sách model từ provider"
     },
     "keyWarnings": {
       "quota_exceeded": "Key hợp lệ nhưng đã hết quota hôm nay",
-      "network_error": "Đã lưu key nhưng chưa kiểm tra được — không kết nối tới Google",
-      "service_unavailable": "Đã lưu key nhưng Google đang lỗi tạm thời, chưa kiểm tra được",
-      "sdk_missing": "Đã lưu key nhưng thiếu thư viện google-genai nên chưa kiểm tra được"
+      "network_error": "Đã lưu key nhưng chưa kiểm tra được — không kết nối tới provider",
+      "service_unavailable": "Đã lưu key nhưng provider đang lỗi tạm thời, chưa kiểm tra được",
+      "sdk_missing": "Đã lưu key nhưng thiếu thư viện SDK của provider nên chưa kiểm tra được",
+      "models_unavailable": "Đã lưu key nhưng provider không trả về danh sách model — sẽ dùng model mặc định"
     },
     "verify": {
       "button": "Kiểm tra key",
@@ -515,7 +521,7 @@
     },
     "modelUsage": {
       "title": "Sử dụng theo Model",
-      "description": "Quota Gemini reset 00:00 Pacific Time mỗi ngày — số bên dưới là tình trạng hôm nay so với giới hạn",
+      "description": "Quota reset 00:00 Pacific Time mỗi ngày — số bên dưới là tình trạng hôm nay so với giới hạn",
       "totalTokens": "Tổng tokens",
       "successRate": "Tỷ lệ thành công",
       "errorPrefix": "Lỗi:",
@@ -536,7 +542,7 @@
     "history": {
       "buttonLabel": "Lịch sử",
       "dialogTitle": "Lịch sử sử dụng",
-      "dialogDescription": "Số request và token đã dùng theo từng ngày (theo giờ Pacific Time, mốc reset RPD của Gemini).",
+      "dialogDescription": "Số request và token đã dùng theo từng ngày (theo giờ Pacific Time, mốc reset RPD).",
       "rangeLabel": "Khoảng thời gian",
       "range7": "7 ngày",
       "range30": "30 ngày",
@@ -677,7 +683,7 @@
     "loading": "Đang tải...",
     "emptyState": {
       "title": "Chưa có API key nào",
-      "description": "Thêm Gemini API key để bắt đầu tạo quiz. Hệ thống sẽ tự động xoay vòng giữa các key khi gặp rate limit."
+      "description": "Thêm API key của Gemini, Claude, OpenAI, DeepSeek, Groq, xAI, Mistral hoặc OpenRouter để bắt đầu tạo quiz. Hệ thống tự xoay vòng giữa các key khi gặp rate limit."
     },
     "deletedKey": "Đã xóa key",
     "updatedLabel": "Đã cập nhật nhãn",
@@ -685,7 +691,7 @@
     "toggleError": "Không đổi được trạng thái key",
     "renameError": "Không cập nhật được nhãn",
     "freeTier": {
-      "title": "Giới hạn Free Tier (Gemini API)",
+      "title": "Giới hạn Free Tier",
       "description": "Rate limit cho mỗi API key, mỗi model có quota riêng",
       "bestQuality": "Chất lượng tốt nhất",
       "fastest": "Nhanh nhất, rẻ nhất",
@@ -708,6 +714,25 @@
     "rateLimit": {
       "perDay": "/ngày",
       "perMinute": "/phút"
+    },
+    "providers": {
+      "title": "Nhà cung cấp AI",
+      "description": "Chọn provider chạy mặc định. Danh sách model được lấy trực tiếp từ provider nên không bị lỗi thời.",
+      "defaultLabel": "Provider mặc định",
+      "defaultBadge": "Mặc định",
+      "fallbackLabel": "Tự chuyển provider khi hết quota",
+      "fallbackDescription": "Khi mọi key của provider mặc định hết quota, tự dùng provider khác còn key. Tắt nếu không muốn vô tình dùng provider trả phí.",
+      "freeTier": "có gói miễn phí",
+      "noKeys": "chưa có key",
+      "keyCount": "{{active}}/{{total}} key đang hoạt động",
+      "noVision": "không đọc được ảnh",
+      "chainLabel": "Thứ tự model",
+      "pinned": "(tự chọn)",
+      "catalogueCount": "{{count}} model đã lưu",
+      "refreshModels": "Tải lại model",
+      "refreshNeedsKey": "Thêm key cho provider này trước",
+      "refreshSuccess": "Đã tải {{count}} model",
+      "refreshFailed": "Không tải được danh sách model"
     }
   },
   "folderStats": {

@@ -46,9 +46,8 @@ class Config:
     # Allowed file extensions
     ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "bmp", "webp", "tiff", "docx", "doc"}
 
-    # Gemini model fallback chain — tried in order on 429 quota errors.
-    # API keys are managed via the UI (Settings > API Keys), stored in the DB.
-    GEMINI_FALLBACK_CHAIN = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
+    # LLM providers, keys and per-provider model chains are managed via the UI
+    # (Settings > API Keys) and stored in the DB — see app/features/llm.
 
     # OAuth apps for the Google Drive / Notion material sources. These are the
     # *app's* credentials, not the user's — one registration serves every

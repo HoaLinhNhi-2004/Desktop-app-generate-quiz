@@ -1,11 +1,11 @@
 """
 Smart Folder Import Service — Scan a local directory, extract text snippets,
-use Gemini AI to categorize files into learning-material folders, and import them.
+use an LLM to categorize files into learning-material folders, and import them.
 
 Pipeline:
   1. Walk the directory recursively, filter supported file types
   2. Smart-extract representative text from each file (head + tail + densest page)
-  3. Batch files (15 per request) → send to Gemini for categorization
+  3. Batch files (15 per request) → send to the LLM for categorization
   4. Match AI-suggested folders to existing DB folders or create new ones
   5. TRASH files → "Review Later" folder (safe, not deleted)
   6. Copy files to upload storage and create UploadedFileRecord entries
@@ -25,6 +25,12 @@ from datetime import datetime, timezone
 
 from app.db import db
 from app.features.folder.models import Folder
+from app.features.llm import (
+    AllModelsExhaustedError,
+    LlmCredential,
+    generate_with_fallback,
+    select_credential,
+)
 from app.features.upload.models import UploadedFileRecord
 
 logger = logging.getLogger(__name__)
@@ -385,17 +391,14 @@ def _normalize_folder_name(name: str) -> str:
 def _categorize_batch(
     file_infos: list[dict],
     existing_folders: list[str],
-    api_key: str,
-    model_chain: list[str],
+    cred: LlmCredential,
     job_id: str = "",
 ) -> dict[str, str]:
     """
-    Send a batch of files to Gemini and return a mapping: filename → folder name.
-    Uses 'TRASH' for non-educational files. Includes few-shot examples and
-    structured output instructions for better accuracy.
+    Send a batch of files to the configured LLM and return a mapping:
+    filename -> folder name. Uses 'TRASH' for non-educational files. Includes
+    few-shot examples and structured output instructions for better accuracy.
     """
-    import google.generativeai as genai
-
     # Build the file list for the prompt
     file_list_text = ""
     for i, fi in enumerate(file_infos, 1):
@@ -435,92 +438,58 @@ def _categorize_batch(
         f"FILES:{file_list_text}"
     )
 
-    genai.configure(api_key=api_key)
+
+    def _parse(raw: str) -> dict[str, str] | None:
+        cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip()
+        cleaned = re.sub(r"```\s*$", "", cleaned).strip()
+        parsed = json.loads(cleaned)
+        if not isinstance(parsed, list):
+            return None
+        mapping = {}
+        for item in parsed:
+            fname = item.get("file", "")
+            folder = item.get("folder", "TRASH")
+            # Normalize folder names (except TRASH)
+            if folder.upper() != "TRASH":
+                folder = _normalize_folder_name(folder)
+            mapping[fname] = folder
+        return mapping
 
     last_err = None
-    for model_name in model_chain:
-        try:
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.1,  # lower for more consistent classification
-                    max_output_tokens=4096,
-                ),
-            )
-            raw = (response.text or "").strip()
-
-            # Parse JSON response
-            cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip()
-            cleaned = re.sub(r"```\s*$", "", cleaned).strip()
-
-            parsed = json.loads(cleaned)
-            if isinstance(parsed, list):
-                mapping = {}
-                for item in parsed:
-                    fname = item.get("file", "")
-                    folder = item.get("folder", "TRASH")
-                    # Normalize folder names (except TRASH)
-                    if folder.upper() != "TRASH":
-                        folder = _normalize_folder_name(folder)
-                    mapping[fname] = folder
-                return mapping
-        except Exception as e:
-            err_str = str(e).lower()
-            is_429 = "429" in err_str or "resource_exhausted" in err_str
-            if is_429:
-                logger.warning("Model %s rate limited, trying next model...", model_name)
-                # Update job status so frontend can see rate limit message
-                if job_id:
-                    _update_job(job_id, rateLimitInfo=f"Rate limited on {model_name}, trying fallback...")
-                last_err = e
-                continue
-            logger.error("Gemini categorization error with %s: %s", model_name, e)
-            last_err = e
-            continue
-
-    # All models exhausted — try retry with backoff
-    if last_err and job_id:
-        err_str = str(last_err).lower()
-        is_429 = "429" in err_str or "resource_exhausted" in err_str
-        if is_429:
+    try:
+        result = generate_with_fallback(
+            cred, prompt, max_output_tokens=4096, temperature=0.1,
+        )
+        mapping = _parse(result.text)
+        if mapping is not None:
+            return mapping
+    except AllModelsExhaustedError as e:
+        last_err = e
+        if job_id:
             _update_job(job_id, rateLimitInfo="All models rate limited. Waiting 60s before retry...")
-            logger.info("All models rate limited. Waiting %ds before retry...", MAX_RETRY_WAIT)
-            # Wait with cancel check
-            for _ in range(MAX_RETRY_WAIT):
-                if _is_job_cancelled(job_id):
-                    return {}
-                time.sleep(1)
+        logger.info("All models rate limited. Waiting %ds before retry...", MAX_RETRY_WAIT)
+        # Wait with cancel check
+        for _ in range(MAX_RETRY_WAIT):
+            if _is_job_cancelled(job_id):
+                return {}
+            time.sleep(1)
+        if job_id:
             _update_job(job_id, rateLimitInfo="")
-            # Retry once with the first model
-            try:
-                import google.generativeai as genai
-                genai.configure(api_key=api_key)
-                model = genai.GenerativeModel(model_chain[0])
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.1,
-                        max_output_tokens=4096,
-                    ),
-                )
-                raw = (response.text or "").strip()
-                cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip()
-                cleaned = re.sub(r"```\s*$", "", cleaned).strip()
-                parsed = json.loads(cleaned)
-                if isinstance(parsed, list):
-                    mapping = {}
-                    for item in parsed:
-                        fname = item.get("file", "")
-                        folder = item.get("folder", "TRASH")
-                        if folder.upper() != "TRASH":
-                            folder = _normalize_folder_name(folder)
-                        mapping[fname] = folder
-                    return mapping
-            except Exception as retry_err:
-                logger.error("Retry also failed: %s", retry_err)
+        try:
+            result = generate_with_fallback(
+                cred, prompt, max_output_tokens=4096, temperature=0.1,
+            )
+            mapping = _parse(result.text)
+            if mapping is not None:
+                return mapping
+        except Exception as retry_err:
+            logger.error("Retry also failed: %s", retry_err)
+            last_err = retry_err
+    except Exception as e:
+        logger.error("Categorization error: %s", e)
+        last_err = e
 
-    logger.error("All models failed for categorization. Last error: %s", last_err)
+    logger.error("Categorization failed. Last error: %s", last_err)
     # Fallback: use subdirectory structure
     return {fi["name"]: _normalize_folder_name(fi.get("rel_dir", "") or "Uncategorized") for fi in file_infos}
 
@@ -628,16 +597,14 @@ def _run_import_pipeline(job_id: str, dir_path: str, app):
                 _update_job(job_id, status="completed")
                 return
 
-            # Get API key from the key manager
-            from app.features.api_keys.key_manager import get_optimal_key
-            key_obj = get_optimal_key()
-            if not key_obj:
-                _update_job(job_id, status="error", error="No API key available. Please add a Gemini API key in Settings.")
+            # Pick a provider + key from the shared pool
+            cred = select_credential()
+            if cred is None:
+                _update_job(
+                    job_id, status="error",
+                    error="No API key available. Add one in Settings > API Keys.",
+                )
                 return
-
-            api_key = key_obj.key
-            from flask import current_app
-            model_chain = current_app.config.get("GEMINI_FALLBACK_CHAIN", ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"])
 
             # Get existing folder names
             existing_folders = [f.name for f in Folder.query.all()]
@@ -657,7 +624,7 @@ def _run_import_pipeline(job_id: str, dir_path: str, app):
                 for fi in batch:
                     _update_file_status(job_id, fi["name"], "categorizing")
 
-                batch_mapping = _categorize_batch(batch, existing_folders, api_key, model_chain, job_id)
+                batch_mapping = _categorize_batch(batch, existing_folders, cred, job_id)
 
                 if _is_job_cancelled(job_id):
                     _update_job(job_id, status="cancelled")

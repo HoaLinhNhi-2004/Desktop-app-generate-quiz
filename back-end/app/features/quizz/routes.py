@@ -573,9 +573,11 @@ def _prepare_generation(req) -> dict:
 
     config = parse_config(req.form)
 
-    from app.features.api_keys.key_manager import get_optimal_key
-    if not get_optimal_key():
-        raise RuntimeError("Chưa có Gemini API key. Vào trang API Keys (Settings) để thêm key.")
+    from app.features.llm import NoCredentialError, require_credential
+    try:
+        require_credential()
+    except NoCredentialError as exc:
+        raise RuntimeError(str(exc)) from exc
 
     saved_paths, file_meta = save_request_files(files)
     return build_payload(

@@ -1,9 +1,13 @@
 """
-API Keys feature - SQLAlchemy models for managing multiple Gemini API keys.
+API Keys feature - SQLAlchemy models for the multi-provider key pool.
 
 The raw key is encrypted at rest (see crypto.py). A SHA-256 hash of the
 plaintext is stored separately to support duplicate detection without
 needing to decrypt every row.
+
+The table is still named `gemini_api_keys` because it predates multi-provider
+support and renaming a table SQLite-side would mean rebuilding it on every
+existing install; the `provider` column is what actually distinguishes rows.
 """
 import hashlib
 import json
@@ -56,10 +60,11 @@ MODEL_LIMITS = {
 }
 
 
-class GeminiApiKey(db.Model):
+class ApiKey(db.Model):
     __tablename__ = "gemini_api_keys"
 
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider = db.Column(db.String(32), nullable=False, default="gemini", index=True)
     label = db.Column(db.String(255), default="")
     # Ciphertext column (mapped to "key" for backward compatibility with the
     # existing schema). Access plaintext via the `key` property.
@@ -144,6 +149,7 @@ class GeminiApiKey(db.Model):
         output_tokens_today = sum(row.output_tokens for row in today_rows)
         return {
             "id": self.id,
+            "provider": self.provider or "gemini",
             "label": self.label or "",
             "key": self.key if include_full_key else self.masked_key(),
             "status": self.status,
@@ -175,6 +181,10 @@ class GeminiApiKey(db.Model):
         }
 
 
+#: Historical alias — the class was Gemini-only before multi-provider support.
+GeminiApiKey = ApiKey
+
+
 class GeminiApiKeyDailyUsage(db.Model):
     """Per-(key, model, day) usage counter — provides historical view + 'today vs RPD'.
 
@@ -189,7 +199,8 @@ class GeminiApiKeyDailyUsage(db.Model):
         nullable=False,
         index=True,
     )
-    model = db.Column(db.String(64), nullable=False)
+    provider = db.Column(db.String(32), nullable=False, default="gemini", index=True)
+    model = db.Column(db.String(160), nullable=False)
     date_pst = db.Column(db.Date, nullable=False, index=True)
     requests = db.Column(db.Integer, nullable=False, default=0)
     input_tokens = db.Column(db.Integer, nullable=False, default=0)
@@ -202,6 +213,7 @@ class GeminiApiKeyDailyUsage(db.Model):
     def to_dict(self) -> dict:
         return {
             "keyId": self.key_id,
+            "provider": self.provider or "gemini",
             "model": self.model,
             "datePst": self.date_pst.isoformat() if self.date_pst else None,
             "requests": self.requests,
@@ -211,7 +223,13 @@ class GeminiApiKeyDailyUsage(db.Model):
         }
 
 
-def bump_daily_usage(key_id: str, model: str, input_tokens: int, output_tokens: int) -> None:
+def bump_daily_usage(
+    key_id: str,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    provider: str = "gemini",
+) -> None:
     """Increment today's counter (Pacific Time) for (key, model). Creates row if missing."""
     today = today_pst()
     row = GeminiApiKeyDailyUsage.query.filter_by(
@@ -219,7 +237,7 @@ def bump_daily_usage(key_id: str, model: str, input_tokens: int, output_tokens: 
     ).first()
     if row is None:
         row = GeminiApiKeyDailyUsage(
-            key_id=key_id, model=model, date_pst=today,
+            key_id=key_id, provider=provider, model=model, date_pst=today,
             requests=0, input_tokens=0, output_tokens=0,
         )
         db.session.add(row)

@@ -7,14 +7,17 @@ import {
   useApiKeys,
   useKeyUsageHistory,
   usePoolUsageHistory,
+  useProviders,
 } from "@/features/api-keys";
 import type {
   AddKeyResult,
   DailyUsageEntry,
-  GeminiApiKey,
   KeyVerification,
+  LlmApiKey,
+  LlmProvider,
   ModelSummary,
   ModelUsageStats,
+  ProviderInfo,
 } from "@/features/api-keys";
 import {
   Bar,
@@ -41,6 +44,13 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -79,6 +89,8 @@ import {
   PackageCheck,
   Settings2,
   Copy,
+  Sparkles,
+  ListRestart,
 } from "lucide-react";
 import { useA11y } from "@/config/a11y-provider";
 import type { SpeechRate } from "@/lib/use-speech";
@@ -147,7 +159,40 @@ const modelColors: Record<string, string> = {
   "gemini-2.0-flash": "text-amber-400",
 };
 
-function KeyStatusBadge({ status }: { status: GeminiApiKey["status"] }) {
+/** One accent per provider so a key's vendor is readable at a glance. */
+const providerStyles: Record<LlmProvider, string> = {
+  gemini: "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  anthropic: "bg-orange-500/15 text-orange-400 border-orange-500/30",
+  openai: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  deepseek: "bg-indigo-500/15 text-indigo-400 border-indigo-500/30",
+  groq: "bg-red-500/15 text-red-400 border-red-500/30",
+  xai: "bg-zinc-500/15 text-zinc-300 border-zinc-500/30",
+  mistral: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  openrouter: "bg-violet-500/15 text-violet-400 border-violet-500/30",
+};
+
+function ProviderBadge({
+  provider,
+  displayName,
+}: {
+  provider: LlmProvider;
+  displayName?: string;
+}) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "gap-1 text-[10px] font-medium",
+        providerStyles[provider] ?? providerStyles.gemini,
+      )}
+    >
+      <Sparkles className="size-2.5" />
+      {displayName ?? provider}
+    </Badge>
+  );
+}
+
+function KeyStatusBadge({ status }: { status: LlmApiKey["status"] }) {
   const { t } = useTranslation();
   const cfg = statusConfig[status] || statusConfig.disabled;
   const Icon = cfg.icon;
@@ -195,18 +240,30 @@ function useKeyMessages() {
 
 function AddKeyDialog({
   onAdd,
+  providers,
+  defaultProvider,
 }: {
-  onAdd: (key: string, label: string) => Promise<AddKeyResult>;
+  onAdd: (
+    provider: LlmProvider,
+    key: string,
+    label: string,
+  ) => Promise<AddKeyResult>;
+  providers: ProviderInfo[];
+  defaultProvider: LlmProvider;
 }) {
   const { t } = useTranslation();
   const { errorMessage, warning } = useKeyMessages();
+  const [provider, setProvider] = useState<LlmProvider>(defaultProvider);
   const [key, setKey] = useState("");
   const [label, setLabel] = useState("");
   const [adding, setAdding] = useState(false);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const selected = providers.find((p) => p.id === provider);
+
   function reset() {
+    setProvider(defaultProvider);
     setKey("");
     setLabel("");
     setError(null);
@@ -217,7 +274,7 @@ function AddKeyDialog({
     setAdding(true);
     setError(null);
     try {
-      const added = await onAdd(key.trim(), label.trim());
+      const added = await onAdd(provider, key.trim(), label.trim());
       reset();
       setOpen(false);
       const note = warning(added.verification);
@@ -254,11 +311,53 @@ function AddKeyDialog({
         </DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="grid gap-2">
+            <Label htmlFor="key-provider">
+              {t("settings.addKeyDialog.providerField")}
+            </Label>
+            <Select
+              value={provider}
+              onValueChange={(next) => {
+                setProvider(next as LlmProvider);
+                setError(null);
+              }}
+            >
+              <SelectTrigger id="key-provider">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {providers.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    <span className="flex items-center gap-2">
+                      {p.displayName}
+                      {p.freeTier && (
+                        <span className="text-[10px] text-emerald-400">
+                          {t("settings.providers.freeTier")}
+                        </span>
+                      )}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selected?.consoleUrl && (
+              <button
+                type="button"
+                className="flex w-fit items-center gap-1 text-[11px] text-muted-foreground hover:text-primary transition-colors"
+                onClick={() => openExternalPage(selected.consoleUrl)}
+              >
+                <ExternalLink className="size-3" />
+                {t("settings.addKeyDialog.getKeyLink", {
+                  provider: selected.displayName,
+                })}
+              </button>
+            )}
+          </div>
+          <div className="grid gap-2">
             <Label htmlFor="api-key">{t("settings.apiKeyLabel")}</Label>
             <Input
               id="api-key"
               type="password"
-              placeholder="AIzaSy..."
+              placeholder={selected?.keyHint || "sk-…"}
               value={key}
               onChange={(e) => {
                 setKey(e.target.value);
@@ -349,6 +448,213 @@ function TodayVsRpdCell({
         />
       </div>
     </div>
+  );
+}
+
+// ─── Provider selection ──────────────────────────────────────────────────────
+
+function ProviderRow({
+  provider,
+  isDefault,
+  onRefreshModels,
+  refreshing,
+}: {
+  provider: ProviderInfo;
+  isDefault: boolean;
+  onRefreshModels: () => Promise<void>;
+  refreshing: boolean;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <div
+      className={cn(
+        "rounded-lg border p-3 transition-colors",
+        isDefault
+          ? "border-primary/40 bg-primary/5"
+          : "border-border/50 bg-card/50",
+      )}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <ProviderBadge
+            provider={provider.id}
+            displayName={provider.displayName}
+          />
+          {isDefault && (
+            <Badge variant="outline" className="text-[10px]">
+              {t("settings.providers.defaultBadge")}
+            </Badge>
+          )}
+          {provider.totalKeys === 0 ? (
+            <span className="text-[11px] text-muted-foreground/70">
+              {t("settings.providers.noKeys")}
+            </span>
+          ) : (
+            <span className="text-[11px] text-muted-foreground">
+              {t("settings.providers.keyCount", {
+                active: provider.activeKeys,
+                total: provider.totalKeys,
+              })}
+            </span>
+          )}
+          {!provider.supportsVision && (
+            <span className="text-[11px] text-amber-400/80">
+              {t("settings.providers.noVision")}
+            </span>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1.5 text-xs"
+          onClick={onRefreshModels}
+          disabled={refreshing || provider.totalKeys === 0}
+          title={
+            provider.totalKeys === 0
+              ? t("settings.providers.refreshNeedsKey")
+              : undefined
+          }
+        >
+          <ListRestart className={cn("size-3.5", refreshing && "animate-spin")} />
+          {t("settings.providers.refreshModels")}
+        </Button>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
+          {t("settings.providers.chainLabel")}
+        </span>
+        {provider.modelChain.map((model, index) => (
+          <span
+            key={model}
+            className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+          >
+            {index + 1}. {model}
+          </span>
+        ))}
+        {provider.modelChainOverride.length > 0 && (
+          <span className="text-[10px] text-primary">
+            {t("settings.providers.pinned")}
+          </span>
+        )}
+        {provider.cachedModelCount > 0 && (
+          <span className="text-[10px] text-muted-foreground/60">
+            {t("settings.providers.catalogueCount", {
+              count: provider.cachedModelCount,
+            })}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProvidersCard() {
+  const { t } = useTranslation();
+  const {
+    providers,
+    defaultProvider,
+    crossProviderFallback,
+    loading,
+    setDefaultProvider,
+    setCrossProviderFallback,
+    refreshModels,
+    savingSettings,
+  } = useProviders();
+  const [refreshingProvider, setRefreshingProvider] = useState<string | null>(
+    null,
+  );
+
+  async function handleRefresh(provider: LlmProvider) {
+    setRefreshingProvider(provider);
+    try {
+      const result = await refreshModels(provider);
+      toast.success(
+        t("settings.providers.refreshSuccess", { count: result.count }),
+      );
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : t("settings.providers.refreshFailed"),
+      );
+    } finally {
+      setRefreshingProvider(null);
+    }
+  }
+
+  const configured = providers.filter((p) => p.totalKeys > 0);
+
+  return (
+    <Card className="border-border/50 bg-card/50">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-sm font-medium">
+          <Sparkles className="size-4 text-primary" />
+          {t("settings.providers.title")}
+        </CardTitle>
+        <CardDescription>
+          {t("settings.providers.description")}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-2 sm:max-w-xs">
+          <Label htmlFor="default-provider">
+            {t("settings.providers.defaultLabel")}
+          </Label>
+          <Select
+            value={defaultProvider}
+            onValueChange={(next) => {
+              void setDefaultProvider(next as LlmProvider);
+            }}
+            disabled={loading || savingSettings}
+          >
+            <SelectTrigger id="default-provider">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {providers.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.displayName}
+                  {p.totalKeys === 0 && ` — ${t("settings.providers.noKeys")}`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex items-start justify-between gap-4 rounded-lg border border-border/50 p-3">
+          <div className="space-y-0.5">
+            <Label htmlFor="cross-provider-fallback" className="text-sm">
+              {t("settings.providers.fallbackLabel")}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.providers.fallbackDescription")}
+            </p>
+          </div>
+          <Switch
+            id="cross-provider-fallback"
+            checked={crossProviderFallback}
+            onCheckedChange={(checked) => {
+              void setCrossProviderFallback(checked);
+            }}
+            disabled={loading || savingSettings}
+          />
+        </div>
+
+        <div className="space-y-2">
+          {(configured.length > 0 ? configured : providers).map((p) => (
+            <ProviderRow
+              key={p.id}
+              provider={p}
+              isDefault={p.id === defaultProvider}
+              refreshing={refreshingProvider === p.id}
+              onRefreshModels={() => handleRefresh(p.id)}
+            />
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -555,7 +861,7 @@ function KeyHistoryDialog({
   open,
   onOpenChange,
 }: {
-  apiKey: GeminiApiKey;
+  apiKey: LlmApiKey;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -687,12 +993,14 @@ function KeyHistoryDialog({
 
 function KeyCard({
   apiKey,
+  providerName,
   onToggle,
   onDelete,
   onRename,
   onVerify,
 }: {
-  apiKey: GeminiApiKey;
+  apiKey: LlmApiKey;
+  providerName?: string;
   onToggle: () => Promise<void>;
   onDelete: () => Promise<void>;
   onRename: (label: string) => Promise<void>;
@@ -820,6 +1128,10 @@ function KeyCard({
                   <Pencil className="size-3 opacity-0 group-hover:opacity-50" />
                 </button>
               )}
+              <ProviderBadge
+                provider={apiKey.provider}
+                displayName={providerName}
+              />
               <KeyStatusBadge status={apiKey.status} />
             </div>
 
@@ -1867,7 +2179,13 @@ export function SettingsContent() {
     removeKey,
     verifyKey,
   } = useApiKeys();
+  const { providers, defaultProvider } = useProviders();
   const [refreshing, setRefreshing] = useState(false);
+
+  const providerNames = useMemo(
+    () => new Map(providers.map((p) => [p.id, p.displayName])),
+    [providers],
+  );
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -2004,6 +2322,9 @@ export function SettingsContent() {
           </CardContent>
         </Card>
 
+        {/* Provider selection + per-provider model chains */}
+        <ProvidersCard />
+
         {/* Per-model usage table */}
         <ModelUsageTable models={summary.modelUsage ?? []} />
 
@@ -2059,7 +2380,11 @@ export function SettingsContent() {
                 />
                 {t("settings.refreshButton")}
               </Button>
-              <AddKeyDialog onAdd={(key, label) => addKey(key, label)} />
+              <AddKeyDialog
+                onAdd={addKey}
+                providers={providers}
+                defaultProvider={defaultProvider}
+              />
             </div>
           </div>
 
@@ -2088,7 +2413,11 @@ export function SettingsContent() {
                   {t("settings.emptyState.description")}
                 </p>
                 <div className="mt-4">
-                  <AddKeyDialog onAdd={(key, label) => addKey(key, label)} />
+                  <AddKeyDialog
+                    onAdd={addKey}
+                    providers={providers}
+                    defaultProvider={defaultProvider}
+                  />
                 </div>
               </CardContent>
             </Card>
@@ -2098,6 +2427,7 @@ export function SettingsContent() {
                 <KeyCard
                   key={k.id}
                   apiKey={k}
+                  providerName={providerNames.get(k.provider)}
                   onToggle={async () => {
                     try {
                       await toggleKey(k.id, k.status);

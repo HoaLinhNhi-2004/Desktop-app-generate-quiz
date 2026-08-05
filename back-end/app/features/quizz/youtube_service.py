@@ -15,6 +15,8 @@ import urllib.parse
 import functools
 from typing import Optional, List
 
+from app.features.llm import LlmCredential, generate_with_fallback
+
 logger = logging.getLogger(__name__)
 
 
@@ -323,83 +325,40 @@ Transcript:
 """
 
 
-def summarize_transcript(
-    text: str,
-    api_key: str,
-    model_chain: Optional[List[str]] = None,
-) -> str:
+def summarize_transcript(text: str, cred: LlmCredential) -> str:
     """
-    Use Gemini to summarize a long transcript into a dense outline (~8 000 chars).
+    Condense a long transcript into a dense outline (~8 000 chars) with one LLM call.
 
-    This single pass:
     - Reduces 200k–500k char transcripts to ~8 000 chars (80-90% token saving).
     - Covers the whole video (not just the intro).
     - Fixes ASR errors as a side effect (combines normalize + summarize).
-    - Falls back silently to smart-sampled raw text if the LLM call fails.
-
-    Args:
-        text: Full raw transcript text
-        api_key: Gemini API key
-        model_chain: Models to try in order (falls back on 429)
-
-    Returns:
-        Summarized outline text (or first 40 000 chars of original on error)
+    - Falls back silently to smart-sampled raw text if the call fails, because a
+      worse quiz beats no quiz.
     """
-    if not text.strip() or not api_key:
+    if not text.strip() or not cred:
         return text
 
-    if model_chain is None:
-        model_chain = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
-
-    # Gemini 2.5-flash has a 1M token context window.
-    # 800 000 chars ≈ 150 000–200 000 tokens — well within limits for summarization.
+    # A 1M-token context window comfortably fits this much text for summarization.
     MAX_INPUT_CHARS = 800_000
     truncated = text[:MAX_INPUT_CHARS] if len(text) > MAX_INPUT_CHARS else text
-    prompt = _SUMMARIZE_PROMPT + truncated
 
     try:
-        import google.generativeai as genai  # type: ignore
-        genai.configure(api_key=api_key)
-
-        last_err: Exception | None = None
-        for model_name in model_chain:
-            try:
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.2,
-                        max_output_tokens=8192,
-                    ),
-                )
-                summary = (response.text or "").strip()
-                if summary and len(summary) >= 500:
-                    logger.info(
-                        "Transcript summarized via %s: %d → %d chars (%.1f%% reduction)",
-                        model_name, len(text), len(summary),
-                        (1 - len(summary) / len(text)) * 100,
-                    )
-                    return summary
-                logger.warning(
-                    "Summarization on %s returned too short (%d chars) — trying next model",
-                    model_name, len(summary),
-                )
-            except Exception as e:
-                err_str = str(e).lower()
-                if "429" in err_str and ("daily" in err_str or "per day" in err_str or "quota" in err_str):
-                    logger.warning("Summarize: RPD quota on %s, trying next model", model_name)
-                    last_err = e
-                    continue
-                if "429" in err_str:
-                    logger.warning("Summarize: RPM limit on %s, skipping to next", model_name)
-                    last_err = e
-                    continue
-                logger.warning("Summarize failed on %s: %s", model_name, e)
-                last_err = e
-                continue
-
-        logger.warning("All models failed for summarization (%s) — falling back to raw excerpt", last_err)
-
+        result = generate_with_fallback(
+            cred,
+            _SUMMARIZE_PROMPT + truncated,
+            max_output_tokens=8192,
+            temperature=0.2,
+        )
+        summary = result.text.strip()
+        if summary and len(summary) >= 500:
+            logger.info(
+                "Transcript summarized via %s/%s: %d → %d chars (%.1f%% reduction)",
+                cred.provider, result.model, len(text), len(summary),
+                (1 - len(summary) / len(text)) * 100,
+            )
+            return summary
+        logger.warning("Summarization returned only %d chars — falling back to raw excerpt",
+                       len(summary))
     except Exception as e:
         logger.warning("Transcript summarization skipped: %s — falling back to raw excerpt", e)
 
@@ -408,11 +367,12 @@ def summarize_transcript(
         return text
     # Sample beginning + middle + end
     chunk = 12_000
+    separator = "\n\n[...]\n\n"
     return (
         text[:chunk]
-        + "\n\n[...]\ \n\n"
+        + separator
         + text[len(text) // 2 - chunk // 2: len(text) // 2 + chunk // 2]
-        + "\n\n[...]\n\n"
+        + separator
         + text[-chunk:]
     )
 
@@ -438,88 +398,44 @@ Transcript:
 """
 
 
-def normalize_transcript(
-    text: str,
-    api_key: str,
-    model_chain: Optional[List[str]] = None,
-) -> str:
+def normalize_transcript(text: str, cred: LlmCredential) -> str:
     """
-    Use Gemini to fix ASR phonetic errors in a Vietnamese technical transcript.
+    Fix ASR phonetic errors in a Vietnamese technical transcript.
 
     Only spelling / term corrections are applied — factual content is unchanged.
-    Falls back silently to the original text if the LLM call fails.
-
-    Args:
-        text: Raw ASR transcript text
-        api_key: Gemini API key
-        model_chain: Models to try in order (falls back on 429)
-
-    Returns:
-        Corrected transcript text (or original on error)
+    Falls back silently to the original text if the call fails.
     """
-    if not text.strip() or not api_key:
+    if not text.strip() or not cred:
         return text
-
-    if model_chain is None:
-        model_chain = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
 
     # Keep the prompt+text within a safe input budget (~12 000 chars)
     budget = 12_000 - len(_NORMALIZE_PROMPT)
     truncated = text[:budget] if len(text) > budget else text
 
-    prompt = _NORMALIZE_PROMPT + truncated
-
     try:
-        import google.generativeai as genai  # type: ignore
-        genai.configure(api_key=api_key)
-
-        last_err: Exception | None = None
-        for model_name in model_chain:
-            try:
-                model = genai.GenerativeModel(model_name)
-                response = model.generate_content(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=0.1,        # low — we want faithful corrections only
-                        max_output_tokens=8192,
-                    ),
-                )
-                normalized = (response.text or "").strip()
-                if normalized:
-                    # If Gemini returned less than 80% of original length something went wrong
-                    if len(normalized) < len(truncated) * 0.8:
-                        logger.warning(
-                            "Transcript normalization result suspiciously short "
-                            "(%d vs %d chars) — using original",
-                            len(normalized), len(truncated),
-                        )
-                        return text
-                    # Append the un-processed tail (if we truncated)
-                    tail = text[budget:] if len(text) > budget else ""
-                    result = normalized + (" " + tail if tail else "")
-                    logger.info(
-                        "Transcript normalized via %s: %d → %d chars",
-                        model_name, len(text), len(result),
-                    )
-                    return result
-            except Exception as e:
-                err_str = str(e).lower()
-                # Daily quota exhausted → skip to next model
-                if "429" in err_str and ("daily" in err_str or "per day" in err_str or "quota" in err_str):
-                    logger.warning("Normalize: RPD quota on %s, trying next model", model_name)
-                    last_err = e
-                    continue
-                # Per-minute limit → log and skip (not worth waiting for normalization)
-                if "429" in err_str:
-                    logger.warning("Normalize: RPM limit on %s, skipping normalization", model_name)
-                    return text
-                logger.warning("Transcript normalization failed on %s: %s — using original", model_name, e)
-                last_err = e
-                continue
-
-        logger.warning("All models failed for normalization (%s) — using original", last_err)
-        return text
-
+        result = generate_with_fallback(
+            cred,
+            _NORMALIZE_PROMPT + truncated,
+            max_output_tokens=8192,
+            temperature=0.1,        # low — we want faithful corrections only
+        )
     except Exception as e:
         logger.warning("Transcript normalization skipped: %s", e)
         return text
+
+    normalized = result.text.strip()
+    if not normalized:
+        return text
+    # A result under 80% of the input length means the model summarized instead.
+    if len(normalized) < len(truncated) * 0.8:
+        logger.warning(
+            "Transcript normalization result suspiciously short (%d vs %d chars) — using original",
+            len(normalized), len(truncated),
+        )
+        return text
+
+    tail = text[budget:] if len(text) > budget else ""
+    combined = normalized + (" " + tail if tail else "")
+    logger.info("Transcript normalized via %s/%s: %d → %d chars",
+                cred.provider, result.model, len(text), len(combined))
+    return combined

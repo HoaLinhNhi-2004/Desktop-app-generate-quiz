@@ -11,10 +11,10 @@ def _encrypt_existing_api_keys(app):
     and backfill key_hash for rows that lack it.
     """
     from app.features.api_keys.crypto import encrypt, is_encrypted
-    from app.features.api_keys.models import GeminiApiKey, hash_key
+    from app.features.api_keys.models import ApiKey, hash_key
 
     try:
-        rows = GeminiApiKey.query.all()
+        rows = ApiKey.query.all()
     except Exception as e:
         app.logger.warning("Could not load API keys for encryption migration: %s", e)
         return
@@ -107,11 +107,12 @@ def create_app(config_class=None):
         from app.features.quizz.models import QuizSet, Question  # noqa: F401
         from app.features.upload.models import UploadedFileRecord  # noqa: F401
         from app.features.stats.models import QuizAttempt  # noqa: F401
-        from app.features.api_keys.models import GeminiApiKey, GeminiApiKeyDailyUsage  # noqa: F401
+        from app.features.api_keys.models import ApiKey, GeminiApiKeyDailyUsage  # noqa: F401
         from app.features.integrations.models import (  # noqa: F401
             IntegrationConnection,
             IntegrationCredential,
         )
+        from app.features.llm.models import AppSetting, ProviderModel  # noqa: F401
         db.create_all()
         run_migrations(app.config.get("SQLALCHEMY_DATABASE_URI", ""), app.logger)
         _encrypt_existing_api_keys(app)

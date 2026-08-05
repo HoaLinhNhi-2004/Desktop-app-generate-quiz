@@ -20,7 +20,7 @@
   },
   "header": {
     "settingsTitle": "API Keys Settings",
-    "settingsDescription": "Manage Gemini API keys used to generate quizzes."
+    "settingsDescription": "Manage the API keys (Gemini, Claude, OpenAI…) used to generate quizzes."
   },
   "home": {
     "loading": "Loading folders...",
@@ -82,19 +82,19 @@
       "description": "Tried gemini-2.5-flash → gemini-2.5-flash-lite → gemini-2.0-flash, all free quota exhausted today. Quota resets at 00:00 US time. Try again later!"
     },
     "quotaExceeded": {
-      "title": "Gemini API Quota Exceeded",
-      "description": "Account has exhausted free quota for Gemini model.",
+      "title": "API Quota Exceeded",
+      "description": "Every key for the provider in use has run out of quota.",
       "retryIn": "Please try again in {{seconds}} seconds.",
       "retryLater": "Please try again in a few minutes.",
       "checkBilling": "Check billing at ai.google.dev."
     },
     "noApiKey": {
       "title": "No API Key",
-      "description": "Go to API Keys page (button on header) to add a Gemini API key."
+      "description": "Go to the API Keys page (button in the header) to add an API key."
     },
     "invalidApiKey": {
       "title": "Invalid API Key",
-      "description": "Gemini API key is incorrect or expired. Check the key in the API Keys page."
+      "description": "The API key is incorrect or expired. Check it on the API Keys page."
     },
     "noTextExtracted": {
       "title": "Could not extract text",
@@ -193,7 +193,7 @@
         "analyzing": "Analyzing content",
         "analyzingDesc": "Cleaning and selecting key passages…",
         "generating": "AI generating questions",
-        "generatingDesc": "Gemini is writing questions…",
+        "generatingDesc": "The model is writing questions…",
         "saving": "Saving",
         "savingDesc": "Writing the question set to the folder…",
         "queued": "Queued",
@@ -481,31 +481,37 @@
     "keyAlreadyExists": "Key already exists",
     "addKeyButton": "Add Key",
     "addKeyDialog": {
-      "title": "Add Gemini API Key",
-      "description": "Enter an API key from Google AI Studio. The key is checked against Google before it is saved.",
+      "title": "Add API Key",
+      "description": "Pick a provider and paste its API key. The key is checked with the provider before it is saved.",
       "labelField": "Label (optional)",
       "labelPlaceholder": "E.g.: Main account, Secondary...",
       "cancelButton": "Cancel",
       "addingButton": "Checking key...",
-      "addButton": "Add key"
+      "addButton": "Add key",
+      "providerField": "Provider",
+      "getKeyLink": "Get a key from the {{provider}} console"
     },
     "keyErrors": {
       "empty": "Please enter an API key",
-      "invalid_format": "Wrong key format — a Google AI Studio key starts with \"AIza\" and contains no spaces. Check for missing or extra characters when copying.",
-      "invalid_key": "Google rejected this key. It may have been deleted or revoked — create a new one at aistudio.google.com/apikey.",
+      "invalid_format": "Wrong key format for the selected provider. Check for missing or extra characters when copying — or whether the wrong provider is selected.",
+      "invalid_key": "The provider rejected this key. It may have been deleted or revoked — create a new one in the provider's console.",
       "api_disabled": "The Generative Language API is not enabled for this key's project. Enable it in Google Cloud Console and try again.",
-      "permission_denied": "This key may not call the Generative Language API (it may be restricted by API or by IP).",
-      "rejected": "Google rejected this key",
+      "permission_denied": "This key may not call the provider's generation API (it may be restricted by API or by IP).",
+      "rejected": "The provider rejected this key",
       "duplicate": "This key is already in the list",
       "decrypt_failed": "The stored key could not be decrypted on this machine. Delete it and add it again.",
       "network_unreachable": "Cannot reach the backend. Check that it is running on port 5000.",
-      "internal_error": "The backend hit an unexpected error — check the backend log for details."
+      "internal_error": "The backend hit an unexpected error — check the backend log for details.",
+      "unknown_provider": "Unsupported provider",
+      "no_key": "Add a key for this provider before refreshing its model list",
+      "refresh_failed": "Could not fetch the model list from the provider"
     },
     "keyWarnings": {
       "quota_exceeded": "Key is valid but has no quota left today",
-      "network_error": "Key saved but not verified — could not reach Google",
-      "service_unavailable": "Key saved but Google is temporarily unavailable, so it was not verified",
-      "sdk_missing": "Key saved but the google-genai package is missing, so it was not verified"
+      "network_error": "Key saved but not verified — could not reach the provider",
+      "service_unavailable": "Key saved but the provider is temporarily unavailable, so it was not verified",
+      "sdk_missing": "Key saved but the provider's SDK is missing, so it was not verified",
+      "models_unavailable": "Key saved but the provider returned no model list — the default models will be used"
     },
     "verify": {
       "button": "Check key",
@@ -515,7 +521,7 @@
     },
     "modelUsage": {
       "title": "Usage by Model",
-      "description": "Gemini quotas reset at midnight Pacific Time — values below are today against the daily limit",
+      "description": "Quotas reset at midnight Pacific Time — values below are today against the daily limit",
       "totalTokens": "Total tokens",
       "successRate": "Success rate",
       "errorPrefix": "Error:",
@@ -536,7 +542,7 @@
     "history": {
       "buttonLabel": "History",
       "dialogTitle": "Usage history",
-      "dialogDescription": "Daily requests and tokens used (Pacific Time — Gemini's RPD reset boundary).",
+      "dialogDescription": "Daily requests and tokens used (Pacific Time — the RPD reset boundary).",
       "rangeLabel": "Time range",
       "range7": "7 days",
       "range30": "30 days",
@@ -677,7 +683,7 @@
     "loading": "Loading...",
     "emptyState": {
       "title": "No API keys yet",
-      "description": "Add a Gemini API key to start creating quizzes. The system will automatically rotate between keys when hitting rate limits."
+      "description": "Add an API key for Gemini, Claude, OpenAI, DeepSeek, Groq, xAI, Mistral or OpenRouter to start creating quizzes. Keys are rotated automatically when one hits a rate limit."
     },
     "deletedKey": "Key deleted",
     "updatedLabel": "Label updated",
@@ -685,7 +691,7 @@
     "toggleError": "Failed to toggle key status",
     "renameError": "Failed to update label",
     "freeTier": {
-      "title": "Free Tier Limits (Gemini API)",
+      "title": "Free Tier Limits",
       "description": "Rate limit per API key, each model has separate quota",
       "bestQuality": "Best quality",
       "fastest": "Fastest, cheapest",
@@ -708,6 +714,25 @@
     "rateLimit": {
       "perDay": "/day",
       "perMinute": "/min"
+    },
+    "providers": {
+      "title": "AI providers",
+      "description": "Choose which provider runs by default. Model lists come straight from each provider, so they never go stale.",
+      "defaultLabel": "Default provider",
+      "defaultBadge": "Default",
+      "fallbackLabel": "Switch provider when quota runs out",
+      "fallbackDescription": "When every key of the default provider is exhausted, fall back to another provider that still has one. Turn off to avoid spending on a paid provider unintentionally.",
+      "freeTier": "has a free tier",
+      "noKeys": "no key yet",
+      "keyCount": "{{active}}/{{total}} keys active",
+      "noVision": "cannot read images",
+      "chainLabel": "Model order",
+      "pinned": "(pinned)",
+      "catalogueCount": "{{count}} models cached",
+      "refreshModels": "Refresh models",
+      "refreshNeedsKey": "Add a key for this provider first",
+      "refreshSuccess": "Fetched {{count}} models",
+      "refreshFailed": "Could not refresh the model list"
     }
   },
   "folderStats": {

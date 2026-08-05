@@ -1,16 +1,29 @@
 export type {
   AddKeyResult,
   DailyUsageEntry,
-  GeminiApiKey,
   KeyPoolSummary,
   KeyUsageHistory,
   KeyVerification,
   KeyVerificationCode,
   KeysResponse,
+  LlmApiKey,
+  LlmProvider,
+  LlmSettings,
   ModelSummary,
   ModelUsageStats,
   PoolUsageHistory,
+  ProviderInfo,
+  ProviderModel,
+  ProviderUsage,
+  ProvidersResponse,
+  RefreshModelsResult,
   VerifyKeyResult,
 } from "./types";
 export { ApiKeyError } from "./types";
-export { useApiKeys, useKeyUsageHistory, usePoolUsageHistory } from "./hooks";
+export {
+  useApiKeys,
+  useKeyUsageHistory,
+  useLlmSettings,
+  usePoolUsageHistory,
+  useProviders,
+} from "./hooks";
