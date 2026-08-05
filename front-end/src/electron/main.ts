@@ -52,15 +52,22 @@ function buildContentSecurityPolicy(): string {
   ].join("; ");
 }
 
-// The renderer may only hand the OS URLs that point back at the bundled
-// backend — the OAuth consent screens and the Drive picker are served from
-// there and then redirect onwards themselves. Anything else would turn this
-// channel into "open any link the page asks for".
+// Hosts the renderer may hand to the OS: the bundled backend, which serves the
+// OAuth consent redirect and the Drive picker, plus the two provider consoles
+// linked from the integrations setup dialog. Anything else is refused so this
+// channel cannot become "open any link the page asks for".
+const EXTERNAL_URL_ALLOWLIST = new Set([
+  "localhost",
+  "127.0.0.1",
+  "console.cloud.google.com",
+  "www.notion.so",
+]);
+
 function isAllowedExternalUrl(raw: string): boolean {
   try {
     const url = new URL(raw);
     if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-    return url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    return EXTERNAL_URL_ALLOWLIST.has(url.hostname);
   } catch {
     return false;
   }

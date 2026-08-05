@@ -143,6 +143,27 @@ def _m_008_integration_connections(cursor: sqlite3.Cursor) -> None:
     )
 
 
+def _m_009_integration_credentials(cursor: sqlite3.Cursor) -> None:
+    """User-supplied OAuth apps for Google Drive / Notion. Secrets are encrypted."""
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS integration_credentials (
+            id VARCHAR(36) PRIMARY KEY,
+            provider VARCHAR(32) NOT NULL,
+            client_id VARCHAR(512) NOT NULL DEFAULT '',
+            client_secret TEXT NOT NULL DEFAULT '',
+            picker_api_key TEXT DEFAULT '',
+            created_at DATETIME,
+            updated_at DATETIME
+        )
+        """
+    )
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_integration_credentials_provider "
+        "ON integration_credentials(provider)"
+    )
+
+
 MIGRATIONS: List[Migration] = [
     ("002_api_keys_extras", "API keys: model_usage + key_hash + unique index", _m_002_api_keys_extras),
     ("003_folder_extras", "Folders: is_favorite + last_accessed_at", _m_003_folder_extras),
@@ -151,6 +172,7 @@ MIGRATIONS: List[Migration] = [
     ("006_uploaded_files_extras", "Uploaded files: processing_status + processing_error + chunk_count", _m_006_uploaded_files_extras),
     ("007_api_key_daily_usage", "API keys: per-day usage table for history & RPD tracking", _m_007_api_key_daily_usage),
     ("008_integration_connections", "Integrations: OAuth connections for Google Drive / Notion", _m_008_integration_connections),
+    ("009_integration_credentials", "Integrations: user-supplied OAuth app credentials", _m_009_integration_credentials),
 ]
 
 

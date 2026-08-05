@@ -77,6 +77,8 @@ import {
   Loader2,
   Download,
   PackageCheck,
+  Settings2,
+  Copy,
 } from "lucide-react";
 import { useA11y } from "@/config/a11y-provider";
 import type { SpeechRate } from "@/lib/use-speech";
@@ -84,8 +86,18 @@ import {
   useIntegrations,
   useDisconnectIntegration,
   useConnectIntegration,
+  useVerifyCredentials,
+  useSaveCredentials,
+  useDeleteCredentials,
+  openExternalPage,
+  IntegrationError,
 } from "@/features/integrations";
-import type { IntegrationProvider } from "@/features/integrations";
+import type {
+  CredentialCheck,
+  CredentialVerification,
+  IntegrationProvider,
+  IntegrationStatus,
+} from "@/features/integrations";
 import {
   isUpdateCheckSupported,
   useManualUpdateCheck,
@@ -1148,11 +1160,366 @@ function PoolHistoryCard() {
 
 const PROVIDER_META: Record<
   IntegrationProvider,
-  { name: string; icon: typeof HardDrive }
+  { name: string; icon: typeof HardDrive; consoleUrl: string; stepCount: number }
 > = {
-  google: { name: "Google Drive", icon: HardDrive },
-  notion: { name: "Notion", icon: NotebookText },
+  google: {
+    name: "Google Drive",
+    icon: HardDrive,
+    consoleUrl: "https://console.cloud.google.com/apis/credentials",
+    stepCount: 5,
+  },
+  notion: {
+    name: "Notion",
+    icon: NotebookText,
+    consoleUrl: "https://www.notion.so/my-integrations",
+    stepCount: 4,
+  },
 };
+
+/** Same contract as useKeyMessages: a localized string per backend code,
+ * falling back to the provider's own wording for anything unmapped. */
+function useIntegrationMessages() {
+  const { t } = useTranslation();
+
+  const translateOr = (path: string, fallback: string): string => {
+    const translated = t(path);
+    return translated === path ? fallback : translated;
+  };
+
+  return {
+    errorMessage: (err: unknown): string => {
+      if (err instanceof IntegrationError) {
+        return translateOr(`settings.integrations.errors.${err.code}`, err.message);
+      }
+      return err instanceof Error ? err.message : t("settings.integrations.saveFailed");
+    },
+    checkMessage: (check: CredentialCheck): string =>
+      translateOr(`settings.integrations.errors.${check.code}`, check.message),
+  };
+}
+
+function VerificationReport({
+  verification,
+}: {
+  verification: CredentialVerification;
+}) {
+  const { t } = useTranslation();
+  const { checkMessage } = useIntegrationMessages();
+
+  return (
+    <div className="space-y-1.5 rounded-md border border-border/60 bg-muted/30 p-2.5">
+      {verification.checks.map((check) => {
+        // "Could not reach the provider" is neither a pass nor a failure — it
+        // must not show a green tick the user would read as confirmation.
+        const unknown = check.ok && !check.reachedProvider;
+        return (
+          <p
+            key={check.name}
+            className={cn(
+              "flex items-start gap-1.5 text-xs",
+              unknown
+                ? "text-amber-400"
+                : check.ok
+                  ? "text-emerald-400"
+                  : "text-red-400",
+            )}
+          >
+            {unknown ? (
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            ) : check.ok ? (
+              <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" />
+            ) : (
+              <Ban className="mt-0.5 size-3.5 shrink-0" />
+            )}
+            <span>
+              <span className="font-medium">
+                {t(`settings.integrations.checkNames.${check.name}`)}:
+              </span>{" "}
+              {checkMessage(check)}
+            </span>
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function ProviderSetupDialog({ status }: { status: IntegrationStatus }) {
+  const { t } = useTranslation();
+  const { errorMessage } = useIntegrationMessages();
+  const meta = PROVIDER_META[status.provider];
+  const verify = useVerifyCredentials();
+  const save = useSaveCredentials();
+  const remove = useDeleteCredentials();
+
+  const [open, setOpen] = useState(false);
+  const [clientId, setClientId] = useState(status.credential?.clientId ?? "");
+  const [clientSecret, setClientSecret] = useState("");
+  const [pickerApiKey, setPickerApiKey] = useState("");
+  const [report, setReport] = useState<CredentialVerification | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const stored = status.credential;
+  // A stored secret stays masked, so an untouched field means "keep it" and
+  // the client ID alone is enough to submit the form.
+  const canSubmit =
+    clientId.trim() !== "" && (clientSecret.trim() !== "" || !!stored);
+
+  function resetFrom(next: IntegrationStatus) {
+    setClientId(next.credential?.clientId ?? "");
+    setClientSecret("");
+    setPickerApiKey("");
+    setReport(null);
+    setError(null);
+  }
+
+  function payload() {
+    return {
+      provider: status.provider,
+      clientId: clientId.trim(),
+      clientSecret: clientSecret.trim(),
+      pickerApiKey: pickerApiKey.trim(),
+    };
+  }
+
+  async function handleVerify() {
+    setError(null);
+    setReport(null);
+    try {
+      setReport(await verify.mutateAsync(payload()));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function handleSave() {
+    setError(null);
+    try {
+      const result = await save.mutateAsync(payload());
+      setReport(result.verification);
+      setOpen(false);
+      if (result.connectionCleared) {
+        toast.warning(t("settings.integrations.savedConnectionCleared"));
+      } else if (!result.verification.reachedProvider) {
+        toast.warning(t("settings.integrations.savedUnverified"));
+      } else {
+        toast.success(t("settings.integrations.saved"));
+      }
+    } catch (err) {
+      // Kept inline as well as in the report so it stays readable while fixing.
+      setError(errorMessage(err));
+      if (err instanceof IntegrationError && err.verification) {
+        setReport(err.verification);
+      }
+    }
+  }
+
+  async function handleRemove() {
+    setError(null);
+    try {
+      await remove.mutateAsync(status.provider);
+      setOpen(false);
+      toast.success(t("settings.integrations.credentialsRemoved"));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function openConsole() {
+    // Refused rather than silent when the main process does not allow the host.
+    const opened = await openExternalPage(meta.consoleUrl);
+    if (!opened) toast.error(t("settings.integrations.openFailed"));
+  }
+
+  async function copyRedirectUri() {
+    try {
+      await navigator.clipboard.writeText(status.redirectUri);
+      toast.success(t("settings.integrations.copied"));
+    } catch {
+      toast.error(t("settings.integrations.copyFailed"));
+    }
+  }
+
+  const busy = verify.isPending || save.isPending || remove.isPending;
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) resetFrom(status);
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" className="gap-1.5">
+          <Settings2 className="size-4" />
+          {t("settings.integrations.configure")}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
+            {t("settings.integrations.setupTitle", { provider: meta.name })}
+          </DialogTitle>
+          <DialogDescription>
+            {t("settings.integrations.setupDescription")}
+          </DialogDescription>
+        </DialogHeader>
+
+        <ScrollArea className="max-h-[60vh] pr-3">
+          <div className="grid gap-4 py-1">
+            <ol className="list-decimal space-y-1.5 pl-4 text-xs text-muted-foreground">
+              {Array.from({ length: meta.stepCount }, (_, i) => (
+                <li key={i}>
+                  {t(`settings.integrations.steps.${status.provider}.${i + 1}`)}
+                </li>
+              ))}
+            </ol>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-fit gap-1.5 px-2 text-xs"
+              onClick={openConsole}
+            >
+              <ExternalLink className="size-3.5" />
+              {t("settings.integrations.openConsole", { provider: meta.name })}
+            </Button>
+
+            <div className="grid gap-2">
+              <Label htmlFor={`redirect-${status.provider}`}>
+                {t("settings.integrations.redirectUriLabel")}
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id={`redirect-${status.provider}`}
+                  readOnly
+                  value={status.redirectUri}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="font-mono text-xs"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={copyRedirectUri}
+                  aria-label={t("settings.integrations.copyRedirectUri")}
+                >
+                  <Copy className="size-4" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor={`client-id-${status.provider}`}>
+                {t("settings.integrations.clientIdLabel")}
+              </Label>
+              <Input
+                id={`client-id-${status.provider}`}
+                value={clientId}
+                placeholder={
+                  status.provider === "google"
+                    ? "1234567890-abc.apps.googleusercontent.com"
+                    : "1a2b3c4d-5e6f-7890-abcd-ef1234567890"
+                }
+                onChange={(e) => {
+                  setClientId(e.target.value);
+                  setError(null);
+                }}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor={`client-secret-${status.provider}`}>
+                {t("settings.integrations.clientSecretLabel")}
+              </Label>
+              <Input
+                id={`client-secret-${status.provider}`}
+                type="password"
+                value={clientSecret}
+                placeholder={
+                  stored?.clientSecretMasked ||
+                  (status.provider === "google" ? "GOCSPX-..." : "secret_...")
+                }
+                onChange={(e) => {
+                  setClientSecret(e.target.value);
+                  setError(null);
+                }}
+              />
+              {stored?.clientSecretMasked && (
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.integrations.secretKeptHint")}
+                </p>
+              )}
+            </div>
+
+            {status.needsPickerApiKey && (
+              <div className="grid gap-2">
+                <Label htmlFor={`picker-key-${status.provider}`}>
+                  {t("settings.integrations.pickerKeyLabel")}
+                </Label>
+                <Input
+                  id={`picker-key-${status.provider}`}
+                  type="password"
+                  value={pickerApiKey}
+                  placeholder={stored?.pickerApiKeyMasked || "AIzaSy..."}
+                  onChange={(e) => {
+                    setPickerApiKey(e.target.value);
+                    setError(null);
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.integrations.pickerKeyHint")}
+                </p>
+              </div>
+            )}
+
+            {report && <VerificationReport verification={report} />}
+
+            {error && (
+              <p
+                role="alert"
+                className="flex items-start gap-1.5 rounded-md border border-red-500/30 bg-red-500/5 p-2.5 text-xs text-red-400"
+              >
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                <span>{error}</span>
+              </p>
+            )}
+          </div>
+        </ScrollArea>
+
+        <DialogFooter className="gap-2 sm:justify-between">
+          {stored ? (
+            <Button
+              variant="ghost"
+              className="text-destructive hover:text-destructive"
+              disabled={busy}
+              onClick={handleRemove}
+            >
+              <Trash2 className="size-4" />
+              {t("settings.integrations.removeCredentials")}
+            </Button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              disabled={!canSubmit || busy}
+              onClick={handleVerify}
+            >
+              {verify.isPending && <Loader2 className="size-3.5 animate-spin" />}
+              {t("settings.integrations.verify")}
+            </Button>
+            <Button disabled={!canSubmit || busy} onClick={handleSave}>
+              {save.isPending && <Loader2 className="size-3.5 animate-spin" />}
+              {t("settings.integrations.save")}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function IntegrationsCard() {
   const { t } = useTranslation();
@@ -1198,13 +1565,14 @@ function IntegrationsCard() {
             {t("settings.integrations.loading")}
           </p>
         )}
-        {(providers ?? []).map(({ provider, configured, connection }) => {
+        {(providers ?? []).map((status) => {
+          const { provider, configured, connection } = status;
           const meta = PROVIDER_META[provider];
           const Icon = meta.icon;
           return (
             <div
               key={provider}
-              className="flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2.5"
+              className="flex flex-wrap items-center gap-3 rounded-lg border border-border/60 px-3 py-2.5"
             >
               <Icon className="size-5 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
@@ -1219,6 +1587,7 @@ function IntegrationsCard() {
                       : t("settings.integrations.notConnected")}
                 </p>
               </div>
+              <ProviderSetupDialog status={status} />
               {connection ? (
                 <Button
                   size="sm"

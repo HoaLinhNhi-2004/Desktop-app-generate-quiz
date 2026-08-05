@@ -24,7 +24,7 @@ import requests
 from flask import current_app
 
 from app.db import db
-from app.features.integrations.models import IntegrationConnection
+from app.features.integrations.models import IntegrationConnection, IntegrationCredential
 
 logger = logging.getLogger(__name__)
 
@@ -79,24 +79,63 @@ def get_provider(provider: str) -> dict:
     return spec
 
 
+def get_stored_credential(provider: str) -> IntegrationCredential | None:
+    get_provider(provider)
+    return IntegrationCredential.query.filter_by(provider=provider).first()
+
+
 def get_credentials(provider: str) -> tuple[str, str]:
+    """Client id/secret for a provider.
+
+    The DB comes first: this project is open source, so the OAuth app is
+    registered by the user and entered in Settings. Env vars stay as a fallback
+    for a self-hosted or CI setup that would rather inject them at boot.
+    """
     spec = get_provider(provider)
+
+    stored = get_stored_credential(provider)
+    if stored and stored.client_id and stored.client_secret:
+        return stored.client_id, stored.client_secret
+
     client_id = current_app.config.get(spec["client_id_config"], "")
     client_secret = current_app.config.get(spec["client_secret_config"], "")
     if not client_id or not client_secret:
         raise OAuthError(
             f"Chưa cấu hình OAuth cho {provider}. "
-            f"Đặt {spec['client_id_config']} và {spec['client_secret_config']} trong .env."
+            f"Vào Cài đặt → Nguồn tài liệu bên ngoài để nhập Client ID và Client Secret."
         )
     return client_id, client_secret
+
+
+def get_picker_api_key() -> str:
+    """Google Picker browser API key, stored credential first."""
+    stored = get_stored_credential("google")
+    if stored and stored.picker_api_key:
+        return stored.picker_api_key
+    return current_app.config.get("GOOGLE_PICKER_API_KEY", "")
+
+
+def get_app_id() -> str:
+    """Picker appId — the project number, which prefixes the OAuth client ID."""
+    configured = current_app.config.get("GOOGLE_APP_ID", "")
+    if configured:
+        return configured
+    try:
+        client_id, _ = get_credentials("google")
+    except OAuthError:
+        return ""
+    return client_id.split("-", 1)[0] if "-" in client_id else ""
 
 
 def is_configured(provider: str) -> bool:
     try:
         get_credentials(provider)
-        return True
     except OAuthError:
         return False
+    # Drive is unusable without the Picker key even with a valid OAuth app.
+    if provider == "google":
+        return bool(get_picker_api_key())
+    return True
 
 
 def redirect_uri(provider: str) -> str:

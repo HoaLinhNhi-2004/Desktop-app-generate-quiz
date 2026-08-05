@@ -2,10 +2,13 @@
 Integrations feature - API routes for connecting third-party document sources.
 
 Endpoints:
-  GET    /api/integrations/                       - Provider status + connections
-  GET    /api/integrations/<provider>/authorize   - Redirect to the consent screen
-  GET    /api/integrations/<provider>/callback    - OAuth redirect target
-  DELETE /api/integrations/<provider>             - Disconnect
+  GET    /api/integrations/                            - Status, credentials, setup info
+  POST   /api/integrations/<provider>/credentials/verify - Check an OAuth app, save nothing
+  PUT    /api/integrations/<provider>/credentials      - Verify then store an OAuth app
+  DELETE /api/integrations/<provider>/credentials      - Forget the OAuth app
+  GET    /api/integrations/<provider>/authorize        - Redirect to the consent screen
+  GET    /api/integrations/<provider>/callback         - OAuth redirect target
+  DELETE /api/integrations/<provider>                  - Disconnect the signed-in account
 
 The authorize/callback pair is opened in the user's system browser, not in the
 app window, so the callback answers with a small HTML page instead of JSON.
@@ -14,12 +17,14 @@ import html
 import logging
 import os
 import uuid
+from datetime import datetime, timezone
 
 from flask import Blueprint, current_app, jsonify, redirect, request
 
 from app.db import db
 from app.features.integrations import oauth
-from app.features.integrations.models import IntegrationConnection
+from app.features.integrations.models import IntegrationConnection, IntegrationCredential
+from app.features.integrations.verifier import verify_credentials
 from app.features.upload.models import UploadedFileRecord
 
 logger = logging.getLogger(__name__)
@@ -50,23 +55,150 @@ def _result_page(heading: str, detail: str, ok: bool) -> tuple[str, int]:
     return page, (200 if ok else 400)
 
 
+def _json_body() -> dict:
+    """Request body as a dict, tolerating a missing/incorrect Content-Type."""
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def _clean_str(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
 @integrations_bp.route("/", methods=["GET"])
 def list_integrations():
-    """Per-provider status. `configured` is false when the build shipped no OAuth app."""
+    """Per-provider setup state.
+
+    `configured` means an OAuth app is available (stored or from env);
+    `credential` is the stored one with its secrets masked, absent when the
+    credentials come from the environment instead.
+    """
     connections = {c.provider: c for c in IntegrationConnection.query.all()}
+    credentials = {c.provider: c for c in IntegrationCredential.query.all()}
+
     providers = []
     for provider in oauth.PROVIDERS:
         connection = connections.get(provider)
-        configured = oauth.is_configured(provider)
-        # Drive is unusable without the Picker key even with a valid OAuth app.
-        if provider == "google":
-            configured = configured and bool(current_app.config.get("GOOGLE_PICKER_API_KEY"))
+        credential = credentials.get(provider)
         providers.append({
             "provider": provider,
-            "configured": configured,
+            "configured": oauth.is_configured(provider),
+            "needsPickerApiKey": provider == "google",
+            "credential": credential.to_dict() if credential else None,
+            "redirectUri": oauth.redirect_uri(provider),
             "connection": connection.to_dict() if connection else None,
         })
     return jsonify({"providers": providers}), 200
+
+
+@integrations_bp.route("/<provider>/credentials/verify", methods=["POST"])
+def verify_provider_credentials(provider):
+    """Check an OAuth app against the provider without storing anything.
+
+    Backs the "Kiểm tra" button, so the user can find a typo while the form is
+    still open instead of discovering it on a consent screen in another tab.
+    """
+    try:
+        oauth.get_provider(provider)
+    except oauth.OAuthError as e:
+        return jsonify({"error": str(e), "code": "unknown_provider"}), 404
+
+    data = _json_body()
+    verdict = verify_credentials(
+        provider,
+        client_id=_clean_str(data.get("clientId")),
+        client_secret=_resolve_secret(provider, data, "clientSecret"),
+        redirect_uri=oauth.redirect_uri(provider),
+        picker_api_key=_resolve_secret(provider, data, "pickerApiKey"),
+    )
+    return jsonify({"verification": verdict.to_dict()}), 200
+
+
+def _resolve_secret(provider: str, data: dict, field: str) -> str:
+    """Use the submitted secret, or fall back to the stored one.
+
+    The UI shows secrets masked and leaves the field blank on edit, so an
+    untouched field must mean "keep what is stored" rather than "clear it" —
+    otherwise re-saving to change only the client ID would wipe the secret.
+    """
+    submitted = _clean_str(data.get(field))
+    if submitted:
+        return submitted
+
+    stored = oauth.get_stored_credential(provider)
+    if not stored:
+        return ""
+    return stored.client_secret if field == "clientSecret" else stored.picker_api_key
+
+
+@integrations_bp.route("/<provider>/credentials", methods=["PUT"])
+def save_provider_credentials(provider):
+    """Verify then store an OAuth app. A rejected credential is never stored."""
+    try:
+        oauth.get_provider(provider)
+    except oauth.OAuthError as e:
+        return jsonify({"error": str(e), "code": "unknown_provider"}), 404
+
+    data = _json_body()
+    client_id = _clean_str(data.get("clientId"))
+    client_secret = _resolve_secret(provider, data, "clientSecret")
+    picker_api_key = _resolve_secret(provider, data, "pickerApiKey")
+
+    verdict = verify_credentials(
+        provider,
+        client_id=client_id,
+        client_secret=client_secret,
+        redirect_uri=oauth.redirect_uri(provider),
+        picker_api_key=picker_api_key,
+    )
+    if not verdict.ok:
+        logger.info("Rejected %s OAuth credentials (%s): %s", provider, verdict.code, verdict.message)
+        return jsonify({
+            "error": verdict.message,
+            "code": verdict.code,
+            "verification": verdict.to_dict(),
+        }), 400
+
+    credential = oauth.get_stored_credential(provider)
+    if credential is None:
+        credential = IntegrationCredential(provider=provider)
+        db.session.add(credential)
+
+    # A live connection holds tokens issued by the *previous* OAuth app; once
+    # the client ID changes they can never be refreshed, so drop it and let the
+    # user sign in again rather than leave a connection that silently expires.
+    client_changed = credential.client_id and credential.client_id != client_id
+    if client_changed:
+        IntegrationConnection.query.filter_by(provider=provider).delete()
+
+    credential.client_id = client_id
+    credential.client_secret = client_secret
+    if provider == "google":
+        credential.picker_api_key = picker_api_key
+    credential.updated_at = datetime.now(timezone.utc)
+
+    db.session.commit()
+    logger.info("Stored %s OAuth credentials (verification: %s)", provider, verdict.code)
+
+    return jsonify({
+        "credential": credential.to_dict(),
+        "verification": verdict.to_dict(),
+        "connectionCleared": bool(client_changed),
+    }), 200
+
+
+@integrations_bp.route("/<provider>/credentials", methods=["DELETE"])
+def delete_provider_credentials(provider):
+    """Forget the OAuth app, and with it any account signed in through it."""
+    credential = IntegrationCredential.query.filter_by(provider=provider).first()
+    if not credential:
+        return jsonify({"error": "Chưa cấu hình nhà cung cấp này", "code": "not_found"}), 404
+
+    IntegrationConnection.query.filter_by(provider=provider).delete()
+    db.session.delete(credential)
+    db.session.commit()
+    logger.info("Removed %s OAuth credentials", provider)
+    return jsonify({"message": "Removed"}), 200
 
 
 @integrations_bp.route("/<provider>/authorize", methods=["GET"])
@@ -132,11 +264,11 @@ def google_picker():
     if not folder_id:
         return _result_page("Thiếu thư mục", "Không rõ thêm tài liệu vào thư mục nào.", ok=False)
 
-    api_key = current_app.config.get("GOOGLE_PICKER_API_KEY", "")
+    api_key = oauth.get_picker_api_key()
     if not api_key:
         return _result_page(
             "Chưa cấu hình Google Picker",
-            "Bản dựng này thiếu GOOGLE_PICKER_API_KEY.",
+            "Thiếu Picker API key. Vào Cài đặt → Nguồn tài liệu bên ngoài để nhập.",
             ok=False,
         )
 
@@ -149,7 +281,7 @@ def google_picker():
     return render_picker_page(
         access_token=access_token,
         api_key=api_key,
-        app_id=current_app.config.get("GOOGLE_APP_ID", ""),
+        app_id=oauth.get_app_id(),
         folder_id=folder_id,
         result_url=f"{base}/api/integrations/google/picker-result",
     )

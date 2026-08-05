@@ -3,15 +3,21 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getIntegrationsApi,
   disconnectIntegrationApi,
+  deleteCredentialsApi,
+  saveCredentialsApi,
+  verifyCredentialsApi,
   getNotionPagesApi,
   getAuthorizeUrl,
   getDrivePickerUrl,
   openExternalPage,
 } from "./api";
 import type {
+  CredentialVerification,
   IntegrationProvider,
   IntegrationStatus,
   NotionPage,
+  SaveCredentialsInput,
+  SaveCredentialsResult,
 } from "./types";
 
 export const INTEGRATIONS_QUERY_KEY = ["integrations"] as const;
@@ -27,6 +33,33 @@ export function useDisconnectIntegration() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, IntegrationProvider>({
     mutationFn: disconnectIntegrationApi,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: INTEGRATIONS_QUERY_KEY });
+    },
+  });
+}
+
+/** Check an OAuth app with the provider; stores nothing. */
+export function useVerifyCredentials() {
+  return useMutation<CredentialVerification, Error, SaveCredentialsInput>({
+    mutationFn: verifyCredentialsApi,
+  });
+}
+
+export function useSaveCredentials() {
+  const queryClient = useQueryClient();
+  return useMutation<SaveCredentialsResult, Error, SaveCredentialsInput>({
+    mutationFn: saveCredentialsApi,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: INTEGRATIONS_QUERY_KEY });
+    },
+  });
+}
+
+export function useDeleteCredentials() {
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, IntegrationProvider>({
+    mutationFn: deleteCredentialsApi,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: INTEGRATIONS_QUERY_KEY });
     },
