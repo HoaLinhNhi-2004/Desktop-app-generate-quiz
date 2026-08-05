@@ -3,7 +3,7 @@ Upload feature - API routes for listing / uploading / deleting uploaded file rec
 
 Endpoints:
   GET    /api/uploads?folder_id=<id>  - List uploaded file records for a folder
-  POST   /api/uploads/upload          - Upload files / YouTube / text as materials
+  POST   /api/uploads/upload          - Upload files / YouTube / web page / text as materials
   POST   /api/uploads/<id>/reprocess  - Re-trigger document processing
   DELETE /api/uploads/<id>            - Delete a single record
 """
@@ -11,6 +11,7 @@ import os
 import uuid
 import logging
 import threading
+from urllib.parse import urlparse
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.utils import secure_filename
 from app.db import db
@@ -97,13 +98,15 @@ def _start_processing(folder_id: str, record_ids: list[str]) -> None:
 @upload_bp.route("/upload", methods=["POST"])
 def upload_materials():
     """
-    Upload materials (files / YouTube URL / text) to a folder independently of quiz generation.
+    Upload materials (files / YouTube / web page / text) to a folder independently
+    of quiz generation.
 
     Expects multipart/form-data:
       - folderId: required
-      - inputType: 'files' | 'youtube' | 'text'
+      - inputType: 'files' | 'youtube' | 'web' | 'text'
       For files: one or more files
       For youtube: youtubeUrl
+      For web: sourceUrl
       For text: rawText
     Returns: { records: [...] } with the created upload record(s).
     """
@@ -112,7 +115,7 @@ def upload_materials():
         return jsonify({"error": "folderId is required"}), 400
 
     input_type = (request.form.get("inputType") or "files").strip().lower()
-    if input_type not in ("files", "youtube", "text"):
+    if input_type not in ("files", "youtube", "web", "notion", "text"):
         return jsonify({"error": f"Invalid inputType: {input_type}"}), 400
 
     upload_folder = current_app.config.get("UPLOAD_FOLDER", "uploads")
@@ -165,6 +168,47 @@ def upload_materials():
             file_type="youtube",
             input_mode="youtube",
             source_label=yt_url,
+        )
+        db.session.add(record)
+        created_records.append(record.to_dict())
+
+    elif input_type == "web":
+        page_url = (request.form.get("sourceUrl") or "").strip()
+        if not page_url:
+            return jsonify({"error": "sourceUrl is required"}), 400
+        from app.features.quizz.web_service import fetch_page_title
+        # Title fetch is best-effort; the real extraction happens in the worker,
+        # so a slow or hostile page must not fail the upload request itself.
+        page_title = fetch_page_title(page_url)
+        record = UploadedFileRecord(
+            id=str(uuid.uuid4()),
+            folder_id=folder_id,
+            original_name=(page_title or urlparse(page_url).netloc or "Trang web")[:512],
+            file_size=0,
+            file_type="web",
+            input_mode="web",
+            source_label=page_url,
+        )
+        db.session.add(record)
+        created_records.append(record.to_dict())
+
+    elif input_type == "notion":
+        page_url = (request.form.get("sourceUrl") or "").strip()
+        if not page_url:
+            return jsonify({"error": "sourceUrl is required"}), 400
+        from app.features.integrations import notion_service
+        page_id = notion_service.extract_page_id(page_url)
+        if not page_id:
+            return jsonify({"error": "Không nhận ra ID trang Notion trong đường dẫn"}), 400
+        page_title = notion_service.fetch_page_title(page_id)
+        record = UploadedFileRecord(
+            id=str(uuid.uuid4()),
+            folder_id=folder_id,
+            original_name=(page_title or "Notion page")[:512],
+            file_size=0,
+            file_type="notion",
+            input_mode="notion",
+            source_label=page_url,
         )
         db.session.add(record)
         created_records.append(record.to_dict())

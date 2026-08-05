@@ -9,6 +9,7 @@ electron.contextBridge.exposeInMainWorld("electron", {
   selectFolder: () => ipcInvoke("selectFolder"),
   focusWindow: () => ipcInvoke("focusWindow"),
   setNativeTheme: (theme) => ipcInvokeWithArg("setNativeTheme", theme),
+  openExternalUrl: (url) => ipcInvokeWithArg("openExternalUrl", url),
 } satisfies Window["electron"]);
 
 function ipcInvoke<Key extends keyof EventPayloadMapping>(

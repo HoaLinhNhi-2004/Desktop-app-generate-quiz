@@ -7,7 +7,21 @@ export interface UploadedFile {
   preview?: string;
 }
 
-export type InputMode = "files" | "youtube" | "text";
+/**
+ * Materials accept more sources than quiz generation does — the same-named
+ * union in `@/features/quizz` covers only what POST /api/quiz/generate takes
+ * and must stay at files | youtube | text.
+ */
+export type InputMode =
+  | "files"
+  | "youtube"
+  | "web"
+  | "notion"
+  | "gdrive"
+  | "text";
+
+/** Modes whose record is backed by a real file on disk. */
+export const FILE_BACKED_MODES: readonly InputMode[] = ["files", "gdrive"];
 
 export interface YouTubeInput {
   url: string;

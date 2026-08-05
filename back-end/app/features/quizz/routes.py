@@ -135,6 +135,21 @@ def delete_quiz_set(quiz_set_id):
     return jsonify({"message": "Quiz set deleted"}), 200
 
 
+def _split_into_sections(raw: str, section_size: int = 2000) -> list[dict]:
+    """Split text on paragraph boundaries into ~section_size pseudo-pages."""
+    pages: list[dict] = []
+    current = ""
+    for para in re.split(r"\n{2,}", raw.strip()):
+        if len(current) + len(para) + 2 > section_size and current:
+            pages.append({"page": len(pages) + 1, "text": current.strip(), "charCount": len(current.strip())})
+            current = para
+        else:
+            current = (current + "\n\n" + para).strip() if current else para
+    if current.strip():
+        pages.append({"page": len(pages) + 1, "text": current.strip(), "charCount": len(current.strip())})
+    return pages
+
+
 @quiz_bp.route("/sets/<quiz_set_id>/source-text", methods=["GET"])
 def get_quiz_set_source_text(quiz_set_id):
     """
@@ -143,9 +158,10 @@ def get_quiz_set_source_text(quiz_set_id):
     Response:
       {
         "pages": [{"page": 1, "text": "...", "charCount": N}, ...],
-        "inputType": "files" | "youtube" | "text" | "unknown",
+        "inputType": "files" | "youtube" | "web" | "text" | "unknown",
         "totalPages": N,
-        "youtubeUrl": "..."  # only for youtube
+        "youtubeUrl": "...",  # only for youtube
+        "sourceUrl": "..."    # only for web
       }
     """
     quiz_set = QuizSet.query.get(quiz_set_id)
@@ -192,24 +208,28 @@ def get_quiz_set_source_text(quiz_set_id):
             try:
                 with open(record.stored_path, "r", encoding="utf-8") as fh:
                     raw = fh.read()
-                SECTION_SIZE = 2000
-                paragraphs = re.split(r"\n{2,}", raw.strip())
-                pages: list[dict] = []
-                page_num = 1
-                current = ""
-                for para in paragraphs:
-                    if len(current) + len(para) + 2 > SECTION_SIZE and current:
-                        pages.append({"page": page_num, "text": current.strip(), "charCount": len(current.strip())})
-                        page_num += 1
-                        current = para
-                    else:
-                        current = (current + "\n\n" + para).strip() if current else para
-                if current.strip():
-                    pages.append({"page": page_num, "text": current.strip(), "charCount": len(current.strip())})
+                pages = _split_into_sections(raw)
                 return jsonify({"pages": pages, "inputType": "text", "totalPages": len(pages)}), 200
             except Exception as e:
                 logger.warning("source-text: could not read text file: %s", e)
         return jsonify({"pages": [], "inputType": "text", "totalPages": 0}), 200
+
+    # Web page / Notion — nothing on disk; replay the chunks that were actually
+    # indexed rather than re-fetching, which may have changed since.
+    if input_mode in ("web", "notion"):
+        from app.features.upload.vector_store import get_records_chunks
+        try:
+            chunks = get_records_chunks([u.id for u in uploads])
+        except Exception as e:
+            logger.warning("source-text: could not read %s chunks: %s", input_mode, e)
+            chunks = []
+        pages = _split_into_sections("\n\n".join(chunks)) if chunks else []
+        return jsonify({
+            "pages": pages,
+            "inputType": input_mode,
+            "totalPages": len(pages),
+            "sourceUrl": uploads[0].source_label or "",
+        }), 200
 
     # Files (PDF / DOCX / image)
     from app.features.quizz.pdf_service import extract_text_from_pdf_paged

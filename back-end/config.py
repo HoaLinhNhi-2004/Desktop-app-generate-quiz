@@ -50,6 +50,21 @@ class Config:
     # API keys are managed via the UI (Settings > API Keys), stored in the DB.
     GEMINI_FALLBACK_CHAIN = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]
 
+    # OAuth apps for the Google Drive / Notion material sources. These are the
+    # *app's* credentials, not the user's — one registration serves every
+    # install, so they are injected at build time rather than kept in the DB.
+    # Google treats the secret of a "Desktop app" client as non-confidential.
+    # The redirect URI must match what is registered with each provider exactly.
+    OAUTH_REDIRECT_BASE = os.getenv("OAUTH_REDIRECT_BASE", "http://127.0.0.1:5000").rstrip("/")
+    GOOGLE_OAUTH_CLIENT_ID = os.getenv("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    GOOGLE_OAUTH_CLIENT_SECRET = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+    # The Google Picker JS API needs its own browser API key, and the project
+    # number as appId so files picked under drive.file become readable.
+    GOOGLE_PICKER_API_KEY = os.getenv("GOOGLE_PICKER_API_KEY", "").strip()
+    GOOGLE_APP_ID = os.getenv("GOOGLE_APP_ID", "").strip()
+    NOTION_OAUTH_CLIENT_ID = os.getenv("NOTION_OAUTH_CLIENT_ID", "").strip()
+    NOTION_OAUTH_CLIENT_SECRET = os.getenv("NOTION_OAUTH_CLIENT_SECRET", "").strip()
+
     # CORS (when USER_DATA_PATH is set, allow file:// / null for Electron loadFile)
     _cors_default = "http://localhost:5123,http://localhost:5173,http://localhost:3000,http://localhost:4173"
     _cors_env = os.getenv("CORS_ORIGINS", _cors_default)

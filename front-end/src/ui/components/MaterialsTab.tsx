@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "@/config/i18n";
 import { toast } from "sonner";
@@ -32,6 +32,11 @@ import {
   File,
   FileSpreadsheet,
   RefreshCw,
+  Link2,
+  NotebookText,
+  HardDrive,
+  ExternalLink,
+  Search,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -40,12 +45,20 @@ import {
   useUploadMaterials,
   useReprocessUpload,
   useUploadProcessingStream,
+  FILE_BACKED_MODES,
 } from "@/features/upload";
 import type {
+  InputMode,
   UploadRecord,
   UploadProcessingProgress,
   UploadProcessingStage,
 } from "@/features/upload";
+import {
+  useIntegrations,
+  useConnectIntegration,
+  useNotionPages,
+  useOpenDrivePicker,
+} from "@/features/integrations";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -68,7 +81,7 @@ const ACCEPTED_TYPES = [
 const YT_URL_RE =
   /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
 
-type UploadMode = "files" | "youtube" | "text";
+const WEB_URL_RE = /^https?:\/\/[^\s/$.?#][^\s]*$/i;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -77,6 +90,17 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+/** Loose comparison key so "…/bai-viet/" and "…/bai-viet#top" count as the same page. */
+function normalizeUrl(raw: string): string {
+  try {
+    const url = new URL(raw.trim());
+    url.hash = "";
+    return `${url.host.toLowerCase()}${url.pathname.replace(/\/+$/, "")}${url.search}`;
+  } catch {
+    return raw.trim().toLowerCase();
+  }
 }
 
 function formatDate(iso: string) {
@@ -92,6 +116,12 @@ function formatDate(iso: string) {
 function getFileIcon(record: UploadRecord) {
   if (record.inputMode === "youtube")
     return <Youtube className="size-4 text-red-400" />;
+  if (record.inputMode === "web")
+    return <Link2 className="size-4 text-cyan-400" />;
+  if (record.inputMode === "notion")
+    return <NotebookText className="size-4 text-neutral-300" />;
+  if (record.inputMode === "gdrive")
+    return <HardDrive className="size-4 text-yellow-400" />;
   if (record.inputMode === "text")
     return <AlignLeft className="size-4 text-blue-400" />;
   const ext = record.fileType.toLowerCase();
@@ -110,6 +140,9 @@ function getInputModeBadge(mode: string) {
   > = {
     files: { label: "File", variant: "secondary" },
     youtube: { label: "YouTube", variant: "default" },
+    web: { label: i18n.t("materials.modeWeb"), variant: "default" },
+    notion: { label: "Notion", variant: "secondary" },
+    gdrive: { label: "Drive", variant: "secondary" },
     text: { label: i18n.t("materials.text"), variant: "outline" },
   };
   const m = map[mode] ?? { label: mode, variant: "outline" as const };
@@ -202,12 +235,34 @@ function getProcessingBadge(
 
 function UploadForm({ folderId }: { folderId: string }) {
   const { t } = useTranslation();
-  const [mode, setMode] = useState<UploadMode>("files");
+  const [mode, setMode] = useState<InputMode>("files");
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [ytUrl, setYtUrl] = useState("");
+  const [webUrl, setWebUrl] = useState("");
   const [rawText, setRawText] = useState("");
   const uploadMaterials = useUploadMaterials();
   const { data: existingRecords } = useUploadRecords(folderId);
+
+  const [notionUrl, setNotionUrl] = useState("");
+  const [notionQuery, setNotionQuery] = useState("");
+  const [notionSearch, setNotionSearch] = useState("");
+  const { data: integrations } = useIntegrations();
+  const connectIntegration = useConnectIntegration();
+  const openDrivePicker = useOpenDrivePicker();
+  const notionStatus = integrations?.find((i) => i.provider === "notion");
+  const notionConnected = !!notionStatus?.connection;
+  const googleStatus = integrations?.find((i) => i.provider === "google");
+  const googleConnected = !!googleStatus?.connection;
+  const { data: notionPages, isFetching: notionLoading } = useNotionPages(
+    notionSearch,
+    mode === "notion" && notionConnected,
+  );
+
+  // Notion search is a network round-trip per keystroke otherwise.
+  useEffect(() => {
+    const timer = setTimeout(() => setNotionSearch(notionQuery.trim()), 400);
+    return () => clearTimeout(timer);
+  }, [notionQuery]);
 
   const [isDragging, setIsDragging] = useState(false);
 
@@ -224,9 +279,14 @@ function UploadForm({ folderId }: { folderId: string }) {
   const ytValid = ytUrl === "" || YT_URL_RE.test(ytUrl);
   const ytFilled = ytUrl.trim() !== "";
 
+  const webValid = webUrl === "" || WEB_URL_RE.test(webUrl.trim());
+  const webFilled = webUrl.trim() !== "";
+
   const canSubmit =
     (mode === "files" && pendingFiles.length > 0) ||
     (mode === "youtube" && ytFilled && ytValid) ||
+    (mode === "web" && webFilled && webValid) ||
+    (mode === "notion" && notionUrl !== "") ||
     (mode === "text" &&
       rawText.trim().length > 0 &&
       rawText.length <= TEXT_MAX_CHARS);
@@ -266,6 +326,28 @@ function UploadForm({ folderId }: { folderId: string }) {
             return;
           }
         }
+      } else if (mode === "web") {
+        const key = normalizeUrl(webUrl);
+        const existing = existingRecords.find(
+          (r) => r.inputMode === "web" && normalizeUrl(r.sourceLabel) === key,
+        );
+        if (existing) {
+          toast.warning(t("materials.duplicateWeb"), {
+            description: existing.sourceLabel,
+          });
+          return;
+        }
+      } else if (mode === "notion") {
+        const key = normalizeUrl(notionUrl);
+        const existing = existingRecords.find(
+          (r) => r.inputMode === "notion" && normalizeUrl(r.sourceLabel) === key,
+        );
+        if (existing) {
+          toast.warning(t("materials.duplicateNotion"), {
+            description: existing.originalName,
+          });
+          return;
+        }
       } else if (mode === "text") {
         const trimmed = rawText.trim();
         const existing = existingRecords.find(
@@ -289,6 +371,12 @@ function UploadForm({ folderId }: { folderId: string }) {
         inputType: mode,
         files: mode === "files" ? pendingFiles : undefined,
         youtubeUrl: mode === "youtube" ? ytUrl : undefined,
+        sourceUrl:
+          mode === "web"
+            ? webUrl.trim()
+            : mode === "notion"
+              ? notionUrl
+              : undefined,
         rawText: mode === "text" ? rawText : undefined,
       },
       {
@@ -300,6 +388,8 @@ function UploadForm({ folderId }: { folderId: string }) {
           });
           setPendingFiles([]);
           setYtUrl("");
+          setWebUrl("");
+          setNotionUrl("");
           setRawText("");
         },
         onError: (err) => {
@@ -311,11 +401,9 @@ function UploadForm({ folderId }: { folderId: string }) {
     );
   };
 
-  const modeButtons: {
-    value: UploadMode;
-    label: string;
-    icon: React.ReactNode;
-  }[] = [
+  type ModeButton = { value: InputMode; label: string; icon: React.ReactNode };
+
+  const localModes: ModeButton[] = [
     {
       value: "files",
       label: t("materials.modeFiles"),
@@ -333,6 +421,54 @@ function UploadForm({ folderId }: { folderId: string }) {
     },
   ];
 
+  // Providers with no OAuth app in this build are hidden rather than shown
+  // permanently disabled — there is nothing the user could do about them.
+  const serviceModes: ModeButton[] = [
+    {
+      value: "web",
+      label: t("materials.modeWeb"),
+      icon: <Link2 className="size-4" />,
+    },
+    ...(notionStatus?.configured
+      ? [
+          {
+            value: "notion" as InputMode,
+            label: "Notion",
+            icon: <NotebookText className="size-4" />,
+          },
+        ]
+      : []),
+    ...(googleStatus?.configured
+      ? [
+          {
+            value: "gdrive" as InputMode,
+            label: "Drive",
+            icon: <HardDrive className="size-4" />,
+          },
+        ]
+      : []),
+  ];
+
+  const renderModeRow = (buttons: ModeButton[]) => (
+    <div className="flex gap-1 rounded-lg bg-muted p-1">
+      {buttons.map((m) => (
+        <button
+          key={m.value}
+          onClick={() => setMode(m.value)}
+          className={cn(
+            "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-all",
+            mode === m.value
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {m.icon}
+          {m.label}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <Card className="flex flex-col h-full">
       <CardHeader className="shrink-0 pb-3">
@@ -344,22 +480,12 @@ function UploadForm({ folderId }: { folderId: string }) {
       </CardHeader>
       <CardContent className="flex-1 overflow-y-auto space-y-4">
         {/* Mode selector */}
-        <div className="flex gap-1 rounded-lg bg-muted p-1">
-          {modeButtons.map((m) => (
-            <button
-              key={m.value}
-              onClick={() => setMode(m.value)}
-              className={cn(
-                "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-all",
-                mode === m.value
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {m.icon}
-              {m.label}
-            </button>
-          ))}
+        <div className="space-y-1.5">
+          {renderModeRow(localModes)}
+          <p className="px-1 pt-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            {t("materials.modeGroupServices")}
+          </p>
+          {renderModeRow(serviceModes)}
         </div>
 
         {/* Files mode */}
@@ -498,6 +624,162 @@ function UploadForm({ folderId }: { folderId: string }) {
           </div>
         )}
 
+        {/* Web page mode */}
+        {mode === "web" && (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-cyan-200 bg-cyan-50 p-3 text-sm text-cyan-800 dark:border-cyan-800 dark:bg-cyan-950/30 dark:text-cyan-300">
+              <p className="font-medium">{t("materials.webTitle")}</p>
+              <p className="mt-0.5 text-xs opacity-80">
+                {t("materials.webDescription")}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="web-url-mat">{t("materials.webLabel")}</Label>
+              <div className="relative">
+                <Link2 className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="web-url-mat"
+                  placeholder="https://vi.wikipedia.org/wiki/..."
+                  aria-describedby="web-url-mat-hint"
+                  aria-invalid={webFilled && !webValid}
+                  className={cn(
+                    "pl-9 pr-9",
+                    webFilled && !webValid
+                      ? "border-destructive focus-visible:ring-destructive"
+                      : webFilled && webValid
+                        ? "border-green-500 focus-visible:ring-green-500"
+                        : "",
+                  )}
+                  value={webUrl}
+                  onChange={(e) => setWebUrl(e.target.value)}
+                />
+                {webFilled && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    {webValid ? (
+                      <CheckCircle2 className="size-4 text-green-500" />
+                    ) : (
+                      <AlertCircle className="size-4 text-destructive" />
+                    )}
+                  </div>
+                )}
+              </div>
+              <p
+                id="web-url-mat-hint"
+                className="text-xs text-muted-foreground"
+              >
+                {t("materials.webHint")}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Notion mode */}
+        {mode === "notion" && !notionConnected && (
+          <div className="space-y-3">
+            <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
+              <p className="font-medium">{t("materials.notionTitle")}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {t("materials.notionConnectHint")}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={() => connectIntegration("notion")}
+            >
+              <ExternalLink className="size-4" />
+              {t("materials.notionConnect")}
+            </Button>
+          </div>
+        )}
+
+        {mode === "notion" && notionConnected && (
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="notion-search-mat">
+                {t("materials.notionPickLabel")}
+              </Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="notion-search-mat"
+                  className="pl-9"
+                  placeholder={t("materials.notionSearchPlaceholder")}
+                  value={notionQuery}
+                  onChange={(e) => setNotionQuery(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {notionLoading && (
+              <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="size-3 animate-spin" />
+                {t("materials.notionLoading")}
+              </p>
+            )}
+
+            {!notionLoading && notionPages?.length === 0 && (
+              <p className="text-xs text-muted-foreground">
+                {t("materials.notionEmpty")}
+              </p>
+            )}
+
+            <div className="max-h-56 space-y-1 overflow-y-auto">
+              {(notionPages ?? []).map((page) => (
+                <button
+                  key={page.id}
+                  onClick={() => setNotionUrl(page.url)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors",
+                    notionUrl === page.url
+                      ? "border-primary bg-primary/5"
+                      : "border-transparent hover:bg-muted/50",
+                  )}
+                >
+                  <NotebookText className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-sm">{page.title}</span>
+                  {notionUrl === page.url && (
+                    <CheckCircle2 className="ml-auto size-4 shrink-0 text-primary" />
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Google Drive mode — the picker itself creates the records */}
+        {mode === "gdrive" && (
+          <div className="space-y-3">
+            <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
+              <p className="font-medium">{t("materials.driveTitle")}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {googleConnected
+                  ? t("materials.driveDescription")
+                  : t("materials.driveConnectHint")}
+              </p>
+            </div>
+            {googleConnected ? (
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={() => openDrivePicker(folderId)}
+              >
+                <HardDrive className="size-4" />
+                {t("materials.drivePick")}
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={() => connectIntegration("google")}
+              >
+                <ExternalLink className="size-4" />
+                {t("materials.driveConnect")}
+              </Button>
+            )}
+          </div>
+        )}
+
         {/* Text mode */}
         {mode === "text" && (
           <div className="space-y-3">
@@ -537,8 +819,13 @@ function UploadForm({ folderId }: { folderId: string }) {
           </div>
         )}
 
-        {/* Actions */}
-        <div className="flex items-center gap-2 pt-1">
+        {/* Actions — Drive has no form to submit; its picker does the work */}
+        <div
+          className={cn(
+            "flex items-center gap-2 pt-1",
+            mode === "gdrive" && "hidden",
+          )}
+        >
           <Button
             className="gap-2"
             disabled={!canSubmit || uploadMaterials.isPending}
@@ -648,6 +935,39 @@ function MaterialsList({ folderId }: { folderId: string }) {
                   {record.sourceLabel}
                 </a>
               )}
+              {record.inputMode === "web" && record.sourceLabel && (
+                <a
+                  href={record.sourceLabel}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="truncate text-xs text-cyan-400 hover:underline max-w-87.5"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {record.sourceLabel}
+                </a>
+              )}
+              {record.inputMode === "gdrive" && record.sourceLabel && (
+                <a
+                  href={record.sourceLabel}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="truncate text-xs text-yellow-500 hover:underline max-w-87.5"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {record.sourceLabel}
+                </a>
+              )}
+              {record.inputMode === "notion" && record.sourceLabel && (
+                <a
+                  href={record.sourceLabel}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="truncate text-xs text-muted-foreground hover:underline max-w-87.5"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {record.sourceLabel}
+                </a>
+              )}
               {record.inputMode === "text" && record.sourceLabel && (
                 <p className="truncate text-xs text-muted-foreground/70 italic max-w-87.5">
                   {record.sourceLabel}
@@ -661,11 +981,12 @@ function MaterialsList({ folderId }: { folderId: string }) {
                     <span>{formatFileSize(record.fileSize)}</span>
                   </>
                 )}
-                {!record.hasFile && record.inputMode === "files" && (
-                  <span className="text-amber-500">
-                    · {t("materials.fileNotOnServer")}
-                  </span>
-                )}
+                {!record.hasFile &&
+                  FILE_BACKED_MODES.includes(record.inputMode) && (
+                    <span className="text-amber-500">
+                      · {t("materials.fileNotOnServer")}
+                    </span>
+                  )}
                 {getProcessingBadge(record, liveProgress[record.id])}
               </div>
             </div>

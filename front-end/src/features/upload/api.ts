@@ -1,6 +1,6 @@
 import { APP_CONFIG } from "@/config/app";
 import { openEventStream } from "@/lib/sse";
-import type { UploadRecord, UploadProcessingEvent } from "./types";
+import type { InputMode, UploadRecord, UploadProcessingEvent } from "./types";
 
 const API_URL = APP_CONFIG.API_URL;
 
@@ -94,15 +94,17 @@ export async function getUploadContentApi(id: string): Promise<string> {
 
 export interface UploadMaterialsOptions {
   folderId: string;
-  inputType: "files" | "youtube" | "text";
+  inputType: InputMode;
   files?: File[];
   youtubeUrl?: string;
+  /** Page URL for the `web` and `notion` modes. */
+  sourceUrl?: string;
   rawText?: string;
 }
 
 /**
  * POST /api/uploads/upload
- * Upload materials (files / YouTube / text) independently
+ * Upload materials (files / YouTube / web page / text) independently
  */
 export async function uploadMaterialsApi(
   options: UploadMaterialsOptions,
@@ -117,6 +119,11 @@ export async function uploadMaterialsApi(
     }
   } else if (options.inputType === "youtube" && options.youtubeUrl) {
     formData.append("youtubeUrl", options.youtubeUrl);
+  } else if (
+    (options.inputType === "web" || options.inputType === "notion") &&
+    options.sourceUrl
+  ) {
+    formData.append("sourceUrl", options.sourceUrl);
   } else if (options.inputType === "text" && options.rawText) {
     formData.append("rawText", options.rawText);
   }

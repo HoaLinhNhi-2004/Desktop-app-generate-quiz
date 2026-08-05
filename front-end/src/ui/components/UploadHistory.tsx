@@ -20,6 +20,9 @@ import {
   Trash2,
   Upload,
   File,
+  Link2,
+  NotebookText,
+  HardDrive,
 } from "lucide-react";
 import { useUploadRecords, useDeleteUploadRecord } from "@/features/upload";
 import type { UploadRecord } from "@/features/upload";
@@ -29,6 +32,12 @@ import type { UploadRecord } from "@/features/upload";
 function getFileIcon(record: UploadRecord) {
   if (record.inputMode === "youtube")
     return <Youtube className="size-4 text-red-400" />;
+  if (record.inputMode === "web")
+    return <Link2 className="size-4 text-cyan-400" />;
+  if (record.inputMode === "notion")
+    return <NotebookText className="size-4 text-neutral-300" />;
+  if (record.inputMode === "gdrive")
+    return <HardDrive className="size-4 text-yellow-400" />;
   if (record.inputMode === "text")
     return <AlignLeft className="size-4 text-blue-400" />;
 
@@ -65,6 +74,9 @@ function getInputModeBadge(mode: string) {
   > = {
     files: { label: "File", variant: "secondary" },
     youtube: { label: "YouTube", variant: "default" },
+    web: { label: i18n.t("materials.modeWeb"), variant: "default" },
+    notion: { label: "Notion", variant: "secondary" },
+    gdrive: { label: "Drive", variant: "secondary" },
     text: { label: i18n.t("uploadHistory.textMode"), variant: "outline" },
   };
   const m = map[mode] ?? { label: mode, variant: "outline" as const };
@@ -152,6 +164,17 @@ export function UploadHistory({ folderId }: UploadHistoryProps) {
                         target="_blank"
                         rel="noopener noreferrer"
                         className="truncate text-xs text-red-400 hover:underline max-w-[350px]"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {record.sourceLabel}
+                      </a>
+                    )}
+                    {record.inputMode === "web" && record.sourceLabel && (
+                      <a
+                        href={record.sourceLabel}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="truncate text-xs text-cyan-400 hover:underline max-w-[350px]"
                         onClick={(e) => e.stopPropagation()}
                       >
                         {record.sourceLabel}

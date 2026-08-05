@@ -6,6 +6,7 @@ import {
   Menu,
   nativeTheme,
   session,
+  shell,
 } from "electron";
 import path from "node:path";
 import { ipcMainHandle, ipcMainHandleWithArg, isDev } from "./util.js";
@@ -48,6 +49,20 @@ function buildContentSecurityPolicy(): string {
     "base-uri 'self'",
     "frame-ancestors 'none'",
   ].join("; ");
+}
+
+// The renderer may only hand the OS URLs that point back at the bundled
+// backend — the OAuth consent screens and the Drive picker are served from
+// there and then redirect onwards themselves. Anything else would turn this
+// channel into "open any link the page asks for".
+function isAllowedExternalUrl(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    return url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  } catch {
+    return false;
+  }
 }
 
 // Matches --background in src/ui/index.css for the .light / .dark roots, so the
@@ -129,6 +144,14 @@ app.on("ready", async () => {
 
   nativeTheme.on("updated", () => {
     mainWindow.setBackgroundColor(currentBackgroundColor());
+  });
+
+  // OAuth consent and the Google Picker must run in the system browser: Google
+  // rejects embedded webviews, and their scripts would violate our CSP.
+  ipcMainHandleWithArg("openExternalUrl", async (url) => {
+    if (!isAllowedExternalUrl(url)) return false;
+    await shell.openExternal(url);
+    return true;
   });
 
   // Focus + restore the main window — invoked when the user clicks an OS notification.

@@ -22,8 +22,11 @@ import {
   CheckSquare,
   Loader2,
   CheckCircle2,
+  Link2,
+  NotebookText,
+  HardDrive,
 } from "lucide-react";
-import { useUploadRecords } from "@/features/upload";
+import { useUploadRecords, FILE_BACKED_MODES } from "@/features/upload";
 import type { UploadRecord } from "@/features/upload";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
@@ -49,6 +52,12 @@ function formatDate(iso: string) {
 function getFileIcon(record: UploadRecord) {
   if (record.inputMode === "youtube")
     return <Youtube className="size-4 text-red-400" />;
+  if (record.inputMode === "web")
+    return <Link2 className="size-4 text-cyan-400" />;
+  if (record.inputMode === "notion")
+    return <NotebookText className="size-4 text-neutral-300" />;
+  if (record.inputMode === "gdrive")
+    return <HardDrive className="size-4 text-yellow-400" />;
   if (record.inputMode === "text")
     return <AlignLeft className="size-4 text-blue-400" />;
   const ext = record.fileType.toLowerCase();
@@ -67,6 +76,9 @@ function getInputModeBadge(mode: string) {
   > = {
     files: { label: "File", variant: "secondary" },
     youtube: { label: "YouTube", variant: "default" },
+    web: { label: i18n.t("materials.modeWeb"), variant: "default" },
+    notion: { label: "Notion", variant: "secondary" },
+    gdrive: { label: "Drive", variant: "secondary" },
     text: { label: i18n.t("materials.text"), variant: "outline" },
   };
   const m = map[mode] ?? { label: mode, variant: "outline" as const };
@@ -94,12 +106,13 @@ export function MaterialSelectPanel({
   const { data: records, isLoading } = useUploadRecords(folderId);
   const selectedId = selectedIds[0] ?? "";
 
-  // Only completed (processed) records can be selected for quiz generation
-  // For files mode, require the file to exist on disk; for youtube/text, only require completed processing
+  // Only completed (processed) records can be selected for quiz generation.
+  // File-backed modes additionally need the file to still exist on disk; URL and
+  // text modes carry their content in the vector store, so completion is enough.
   const usableRecords = (records ?? []).filter(
     (r) =>
       r.processingStatus === "completed" &&
-      (r.inputMode !== "files" || r.hasFile),
+      (!FILE_BACKED_MODES.includes(r.inputMode) || r.hasFile),
   );
   // Records still being processed — shown separately
   const pendingRecords = (records ?? []).filter(

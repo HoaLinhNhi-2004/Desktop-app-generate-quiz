@@ -66,9 +66,20 @@ import {
   Gauge,
   History,
   Accessibility,
+  Plug,
+  HardDrive,
+  NotebookText,
+  ExternalLink,
+  Loader2,
 } from "lucide-react";
 import { useA11y } from "@/config/a11y-provider";
 import type { SpeechRate } from "@/lib/use-speech";
+import {
+  useIntegrations,
+  useDisconnectIntegration,
+  useConnectIntegration,
+} from "@/features/integrations";
+import type { IntegrationProvider } from "@/features/integrations";
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
@@ -1019,6 +1030,113 @@ function PoolHistoryCard() {
 
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
+const PROVIDER_META: Record<
+  IntegrationProvider,
+  { name: string; icon: typeof HardDrive }
+> = {
+  google: { name: "Google Drive", icon: HardDrive },
+  notion: { name: "Notion", icon: NotebookText },
+};
+
+function IntegrationsCard() {
+  const { t } = useTranslation();
+  const { data: providers, isLoading } = useIntegrations();
+  const disconnect = useDisconnectIntegration();
+  const connect = useConnectIntegration();
+  const [connecting, setConnecting] = useState<IntegrationProvider | null>(null);
+
+  const handleConnect = async (provider: IntegrationProvider) => {
+    setConnecting(provider);
+    try {
+      const opened = await connect(provider);
+      if (!opened) toast.error(t("settings.integrations.openFailed"));
+      else toast.info(t("settings.integrations.browserOpened"));
+    } finally {
+      setConnecting(null);
+    }
+  };
+
+  const handleDisconnect = (provider: IntegrationProvider) => {
+    disconnect.mutate(provider, {
+      onSuccess: () => toast.success(t("settings.integrations.disconnected")),
+      onError: (err) => toast.error(err.message),
+    });
+  };
+
+  return (
+    <Card className="border-border/50 bg-card/50">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <Plug className="size-5 text-primary" aria-hidden="true" />
+          <CardTitle className="text-base font-semibold">
+            {t("settings.integrations.sectionTitle")}
+          </CardTitle>
+        </div>
+        <CardDescription>
+          {t("settings.integrations.sectionDescription")}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {isLoading && (
+          <p className="text-sm text-muted-foreground">
+            {t("settings.integrations.loading")}
+          </p>
+        )}
+        {(providers ?? []).map(({ provider, configured, connection }) => {
+          const meta = PROVIDER_META[provider];
+          const Icon = meta.icon;
+          return (
+            <div
+              key={provider}
+              className="flex items-center gap-3 rounded-lg border border-border/60 px-3 py-2.5"
+            >
+              <Icon className="size-5 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">{meta.name}</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {!configured
+                    ? t("settings.integrations.notConfigured")
+                    : connection
+                      ? t("settings.integrations.connectedAs", {
+                          account: connection.accountLabel,
+                        })
+                      : t("settings.integrations.notConnected")}
+                </p>
+              </div>
+              {connection ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={disconnect.isPending}
+                  onClick={() => handleDisconnect(provider)}
+                >
+                  {t("settings.integrations.disconnect")}
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  disabled={!configured || connecting === provider}
+                  onClick={() => handleConnect(provider)}
+                >
+                  {connecting === provider ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <ExternalLink className="size-4" />
+                  )}
+                  {t("settings.integrations.connect")}
+                </Button>
+              )}
+            </div>
+          );
+        })}
+        <p className="text-xs text-muted-foreground">
+          {t("settings.integrations.browserNote")}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 function AccessibilityCard() {
   const { t } = useTranslation();
   const {
@@ -1272,6 +1390,11 @@ export function SettingsContent() {
 
         {/* Pool history */}
         <PoolHistoryCard />
+
+        <Separator />
+
+        {/* Third-party document sources */}
+        <IntegrationsCard />
 
         <Separator />
 

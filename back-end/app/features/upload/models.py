@@ -19,8 +19,8 @@ class UploadedFileRecord(db.Model):
     original_name = db.Column(db.String(512), nullable=False)
     file_size = db.Column(db.Integer, default=0)          # bytes
     file_type = db.Column(db.String(64), default="")      # mime or extension
-    input_mode = db.Column(db.String(16), default="files") # files | youtube | text
-    source_label = db.Column(db.String(1024), default="")  # YouTube URL or "raw text"
+    input_mode = db.Column(db.String(16), default="files") # files | youtube | web | notion | gdrive | text
+    source_label = db.Column(db.String(1024), default="")  # source URL, or a preview of the raw text
     stored_path = db.Column(db.String(1024), default="")   # on-disk path for reuse (files mode)
     quiz_set_id = db.Column(
         db.String(36),

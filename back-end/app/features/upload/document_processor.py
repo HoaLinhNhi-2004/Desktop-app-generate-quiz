@@ -112,7 +112,13 @@ def _extract_text(record: UploadedFileRecord, emit=_noop) -> str:
         return _extract_text_mode(record)
     elif record.input_mode == "youtube":
         return _extract_youtube(record)
-    elif record.input_mode == "files":
+    elif record.input_mode == "web":
+        return _extract_web(record)
+    elif record.input_mode == "notion":
+        return _extract_notion(record)
+    elif record.input_mode in ("files", "gdrive"):
+        # Drive files are downloaded to disk with a real extension, so the
+        # file-type dispatch below applies to them unchanged.
         return _extract_file(record, emit)
     else:
         raise ValueError(f"Unknown input mode: {record.input_mode}")
@@ -131,6 +137,25 @@ def _extract_youtube(record: UploadedFileRecord) -> str:
         return ""
     from app.features.quizz.youtube_service import extract_transcript
     return extract_transcript(url)
+
+
+def _extract_web(record: UploadedFileRecord) -> str:
+    url = record.source_label
+    if not url:
+        return ""
+    from app.features.quizz.web_service import extract_text_from_url
+    return extract_text_from_url(url)
+
+
+def _extract_notion(record: UploadedFileRecord) -> str:
+    url = record.source_label
+    if not url:
+        return ""
+    from app.features.integrations import notion_service
+    page_id = notion_service.extract_page_id(url)
+    if not page_id:
+        raise ValueError(f"Không nhận ra ID trang Notion trong: {url}")
+    return notion_service.extract_page_text(page_id)
 
 
 def _extract_file(record: UploadedFileRecord, emit=_noop) -> str:

@@ -108,6 +108,7 @@ def create_app(config_class=None):
         from app.features.upload.models import UploadedFileRecord  # noqa: F401
         from app.features.stats.models import QuizAttempt  # noqa: F401
         from app.features.api_keys.models import GeminiApiKey, GeminiApiKeyDailyUsage  # noqa: F401
+        from app.features.integrations.models import IntegrationConnection  # noqa: F401
         db.create_all()
         run_migrations(app.config.get("SQLALCHEMY_DATABASE_URI", ""), app.logger)
         _encrypt_existing_api_keys(app)
@@ -134,6 +135,9 @@ def create_app(config_class=None):
 
     from app.features.folder.smart_import_routes import smart_import_bp
     app.register_blueprint(smart_import_bp, url_prefix="/api/folders")
+
+    from app.features.integrations.routes import integrations_bp
+    app.register_blueprint(integrations_bp, url_prefix="/api/integrations")
 
     # Health check route
     @app.route("/api/health")
