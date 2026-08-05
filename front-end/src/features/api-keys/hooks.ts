@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  AddKeyResult,
   GeminiApiKey,
   KeyPoolSummary,
   KeysResponse,
   KeyUsageHistory,
   PoolUsageHistory,
+  VerifyKeyResult,
 } from "./types";
 import {
   addKeyApi,
@@ -13,6 +15,7 @@ import {
   getKeysApi,
   getPoolUsageHistoryApi,
   updateKeyApi,
+  verifyKeyApi,
 } from "./api";
 
 const QUERY_KEY = ["api-keys"] as const;
@@ -45,11 +48,18 @@ export function useApiKeys() {
   const invalidate = () => qc.invalidateQueries({ queryKey: QUERY_KEY });
 
   const addMutation = useMutation<
-    GeminiApiKey,
+    AddKeyResult,
     Error,
     { key: string; label?: string }
   >({
     mutationFn: ({ key, label }) => addKeyApi(key, label),
+    onSuccess: () => {
+      void invalidate();
+    },
+  });
+
+  const verifyMutation = useMutation<VerifyKeyResult, Error, string>({
+    mutationFn: (id) => verifyKeyApi(id),
     onSuccess: () => {
       void invalidate();
     },
@@ -95,8 +105,10 @@ export function useApiKeys() {
     refresh: async (): Promise<void> => {
       await query.refetch();
     },
-    addKey: (key: string, label?: string): Promise<GeminiApiKey> =>
+    addKey: (key: string, label?: string): Promise<AddKeyResult> =>
       addMutation.mutateAsync({ key, label }),
+    verifyKey: (id: string): Promise<VerifyKeyResult> =>
+      verifyMutation.mutateAsync(id),
     toggleKey: async (
       id: string,
       currentStatus: GeminiApiKey["status"],

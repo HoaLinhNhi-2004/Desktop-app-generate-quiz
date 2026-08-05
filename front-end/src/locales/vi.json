@@ -482,12 +482,36 @@
     "addKeyButton": "Thêm Key",
     "addKeyDialog": {
       "title": "Thêm Gemini API Key",
-      "description": "Nhập API key từ Google AI Studio. Key sẽ được lưu và dùng xoay vòng khi tạo quiz.",
+      "description": "Nhập API key từ Google AI Studio. Key được kiểm tra với Google trước khi lưu.",
       "labelField": "Nhãn (tùy chọn)",
       "labelPlaceholder": "VD: Account chính, Account phụ...",
       "cancelButton": "Hủy",
-      "addingButton": "Đang thêm...",
+      "addingButton": "Đang kiểm tra key...",
       "addButton": "Thêm key"
+    },
+    "keyErrors": {
+      "empty": "Vui lòng nhập API key",
+      "invalid_format": "Key sai định dạng — key Google AI Studio bắt đầu bằng \"AIza\" và không chứa khoảng trắng. Kiểm tra lại xem có copy thiếu/thừa ký tự không.",
+      "invalid_key": "Google từ chối key này. Key có thể đã bị xoá hoặc thu hồi — tạo key mới tại aistudio.google.com/apikey.",
+      "api_disabled": "Project của key này chưa bật Generative Language API. Vào Google Cloud Console bật API rồi thử lại.",
+      "permission_denied": "Key không có quyền gọi Generative Language API (có thể đang bị giới hạn theo API hoặc theo IP).",
+      "rejected": "Google từ chối key này",
+      "duplicate": "Key này đã có trong danh sách rồi",
+      "decrypt_failed": "Không giải mã được key đã lưu trên máy này. Hãy xoá key và thêm lại.",
+      "network_unreachable": "Không kết nối được backend. Kiểm tra backend đã chạy ở cổng 5000 chưa.",
+      "internal_error": "Backend gặp lỗi không mong muốn — xem log backend để biết chi tiết."
+    },
+    "keyWarnings": {
+      "quota_exceeded": "Key hợp lệ nhưng đã hết quota hôm nay",
+      "network_error": "Đã lưu key nhưng chưa kiểm tra được — không kết nối tới Google",
+      "service_unavailable": "Đã lưu key nhưng Google đang lỗi tạm thời, chưa kiểm tra được",
+      "sdk_missing": "Đã lưu key nhưng thiếu thư viện google-genai nên chưa kiểm tra được"
+    },
+    "verify": {
+      "button": "Kiểm tra key",
+      "checking": "Đang kiểm tra...",
+      "valid": "Key hoạt động tốt",
+      "failed": "Key không dùng được — đã tắt key này"
     },
     "modelUsage": {
       "title": "Sử dụng theo Model",

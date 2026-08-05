@@ -1,5 +1,5 @@
 import os
-from flask import Flask
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from config import get_config
 from app.db import db
@@ -139,9 +139,44 @@ def create_app(config_class=None):
     from app.features.integrations.routes import integrations_bp
     app.register_blueprint(integrations_bp, url_prefix="/api/integrations")
 
+    _register_api_error_handlers(app)
+
     # Health check route
     @app.route("/api/health")
     def health():
         return {"status": "ok", "message": "Quiz API is running"}
 
     return app
+
+
+def _register_api_error_handlers(app):
+    """Make every /api/ failure a JSON body carrying a real message.
+
+    Flask's default error pages are HTML, so a 415 (missing Content-Type), a 400
+    (empty body) or an unhandled 500 all reached the client as markup. The
+    frontend's `res.json()` then threw and every one of them collapsed into the
+    same generic "Failed to ..." string, hiding what actually went wrong.
+    """
+    from werkzeug.exceptions import HTTPException
+
+    def _wants_json() -> bool:
+        return request.path.startswith("/api/")
+
+    @app.errorhandler(HTTPException)
+    def _handle_http_exception(e: HTTPException):
+        if not _wants_json():
+            return e
+        return jsonify({
+            "error": e.description or e.name,
+            "code": f"http_{e.code}",
+        }), e.code or 500
+
+    @app.errorhandler(Exception)
+    def _handle_unexpected(e: Exception):
+        if not _wants_json():
+            raise e
+        app.logger.exception("Unhandled error on %s %s", request.method, request.path)
+        return jsonify({
+            "error": f"{type(e).__name__}: {e}"[:500],
+            "code": "internal_error",
+        }), 500

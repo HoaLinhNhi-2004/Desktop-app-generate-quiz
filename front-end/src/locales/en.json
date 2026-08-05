@@ -482,12 +482,36 @@
     "addKeyButton": "Add Key",
     "addKeyDialog": {
       "title": "Add Gemini API Key",
-      "description": "Enter API key from Google AI Studio. Key will be saved and used in rotation when creating quizzes.",
+      "description": "Enter an API key from Google AI Studio. The key is checked against Google before it is saved.",
       "labelField": "Label (optional)",
       "labelPlaceholder": "E.g.: Main account, Secondary...",
       "cancelButton": "Cancel",
-      "addingButton": "Adding...",
+      "addingButton": "Checking key...",
       "addButton": "Add key"
+    },
+    "keyErrors": {
+      "empty": "Please enter an API key",
+      "invalid_format": "Wrong key format — a Google AI Studio key starts with \"AIza\" and contains no spaces. Check for missing or extra characters when copying.",
+      "invalid_key": "Google rejected this key. It may have been deleted or revoked — create a new one at aistudio.google.com/apikey.",
+      "api_disabled": "The Generative Language API is not enabled for this key's project. Enable it in Google Cloud Console and try again.",
+      "permission_denied": "This key may not call the Generative Language API (it may be restricted by API or by IP).",
+      "rejected": "Google rejected this key",
+      "duplicate": "This key is already in the list",
+      "decrypt_failed": "The stored key could not be decrypted on this machine. Delete it and add it again.",
+      "network_unreachable": "Cannot reach the backend. Check that it is running on port 5000.",
+      "internal_error": "The backend hit an unexpected error — check the backend log for details."
+    },
+    "keyWarnings": {
+      "quota_exceeded": "Key is valid but has no quota left today",
+      "network_error": "Key saved but not verified — could not reach Google",
+      "service_unavailable": "Key saved but Google is temporarily unavailable, so it was not verified",
+      "sdk_missing": "Key saved but the google-genai package is missing, so it was not verified"
+    },
+    "verify": {
+      "button": "Check key",
+      "checking": "Checking...",
+      "valid": "Key is working",
+      "failed": "Key is unusable — it has been disabled"
     },
     "modelUsage": {
       "title": "Usage by Model",

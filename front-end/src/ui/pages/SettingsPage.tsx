@@ -3,13 +3,16 @@ import { useTranslation } from "react-i18next";
 import i18n from "@/config/i18n";
 import { cn } from "@/lib/utils";
 import {
+  ApiKeyError,
   useApiKeys,
   useKeyUsageHistory,
   usePoolUsageHistory,
 } from "@/features/api-keys";
 import type {
+  AddKeyResult,
   DailyUsageEntry,
   GeminiApiKey,
+  KeyVerification,
   ModelSummary,
   ModelUsageStats,
 } from "@/features/api-keys";
@@ -65,6 +68,7 @@ import {
   Cpu,
   Gauge,
   History,
+  ShieldCheck,
   Accessibility,
   Plug,
   HardDrive,
@@ -138,37 +142,83 @@ function KeyStatusBadge({ status }: { status: GeminiApiKey["status"] }) {
   );
 }
 
+/** Map a backend error code to a localized explanation.
+ *
+ * Falls back to the backend's own message rather than a fixed string, so an
+ * unmapped code still tells the user what Google actually said.
+ */
+function useKeyMessages() {
+  const { t } = useTranslation();
+
+  const translateOr = (path: string, fallback: string): string => {
+    const translated = t(path);
+    return translated === path ? fallback : translated;
+  };
+
+  return {
+    errorMessage: (err: unknown): string => {
+      if (err instanceof ApiKeyError) {
+        return translateOr(`settings.keyErrors.${err.code}`, err.message);
+      }
+      return err instanceof Error ? err.message : t("settings.addKeyError");
+    },
+    /** Non-blocking note for a key that was stored but not fully confirmed. */
+    warning: (verification?: KeyVerification): string | null => {
+      if (!verification || verification.code === "valid") return null;
+      return translateOr(
+        `settings.keyWarnings.${verification.code}`,
+        verification.message,
+      );
+    },
+  };
+}
+
 function AddKeyDialog({
   onAdd,
 }: {
-  onAdd: (key: string, label: string) => Promise<void>;
+  onAdd: (key: string, label: string) => Promise<AddKeyResult>;
 }) {
   const { t } = useTranslation();
+  const { errorMessage, warning } = useKeyMessages();
   const [key, setKey] = useState("");
   const [label, setLabel] = useState("");
   const [adding, setAdding] = useState(false);
   const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function reset() {
+    setKey("");
+    setLabel("");
+    setError(null);
+  }
 
   async function handleSubmit() {
-    if (!key.trim()) return;
+    if (!key.trim() || adding) return;
     setAdding(true);
+    setError(null);
     try {
-      await onAdd(key.trim(), label.trim());
-      setKey("");
-      setLabel("");
+      const added = await onAdd(key.trim(), label.trim());
+      reset();
       setOpen(false);
-      toast.success(t("settings.addKeySuccess"));
+      const note = warning(added.verification);
+      if (note) toast.warning(note);
+      else toast.success(t("settings.addKeySuccess"));
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : t("settings.addKeyError"),
-      );
+      // Kept inline (not only a toast) so the user can read it while fixing the key.
+      setError(errorMessage(err));
     } finally {
       setAdding(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) reset();
+      }}
+    >
       <DialogTrigger asChild>
         <Button size="sm" className="gap-1.5">
           <Plus className="size-4" />
@@ -190,8 +240,13 @@ function AddKeyDialog({
               type="password"
               placeholder="AIzaSy..."
               value={key}
-              onChange={(e) => setKey(e.target.value)}
+              onChange={(e) => {
+                setKey(e.target.value);
+                setError(null);
+              }}
               onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+              aria-invalid={error !== null}
+              aria-describedby={error ? "api-key-error" : undefined}
             />
           </div>
           <div className="grid gap-2">
@@ -206,6 +261,16 @@ function AddKeyDialog({
               onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             />
           </div>
+          {error && (
+            <p
+              id="api-key-error"
+              role="alert"
+              className="flex items-start gap-1.5 rounded-md border border-red-500/30 bg-red-500/5 p-2.5 text-xs text-red-400"
+            >
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              <span>{error}</span>
+            </p>
+          )}
         </div>
         <DialogFooter>
           <DialogClose asChild>
@@ -214,6 +279,7 @@ function AddKeyDialog({
             </Button>
           </DialogClose>
           <Button onClick={handleSubmit} disabled={!key.trim() || adding}>
+            {adding && <Loader2 className="size-3.5 animate-spin" />}
             {adding
               ? t("settings.addKeyDialog.addingButton")
               : t("settings.addKeyDialog.addButton")}
@@ -604,18 +670,22 @@ function KeyCard({
   onToggle,
   onDelete,
   onRename,
+  onVerify,
 }: {
   apiKey: GeminiApiKey;
   onToggle: () => Promise<void>;
   onDelete: () => Promise<void>;
   onRename: (label: string) => Promise<void>;
+  onVerify: () => Promise<KeyVerification>;
 }) {
   const { t } = useTranslation();
+  const { errorMessage, warning } = useKeyMessages();
   const [editing, setEditing] = useState(false);
   const [labelDraft, setLabelDraft] = useState(apiKey.label);
   const [deleting, setDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [toggling, setToggling] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
 
   const totalTokens = apiKey.totalTokens;
@@ -663,6 +733,29 @@ function KeyCard({
       await onToggle();
     } finally {
       setToggling(false);
+    }
+  }
+
+  async function handleVerify() {
+    if (verifying) return;
+    setVerifying(true);
+    try {
+      const verification = await onVerify();
+      if (!verification.ok) {
+        toast.error(
+          `${t("settings.verify.failed")} — ${errorMessage(
+            new ApiKeyError(verification.message, verification.code),
+          )}`,
+        );
+        return;
+      }
+      const note = warning(verification);
+      if (note) toast.warning(note);
+      else toast.success(t("settings.verify.valid"));
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setVerifying(false);
     }
   }
 
@@ -843,6 +936,21 @@ function KeyCard({
               aria-label={t("settings.toggleAriaLabel")}
             />
             <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0 text-muted-foreground hover:text-emerald-400"
+                onClick={handleVerify}
+                disabled={verifying}
+                aria-label={t("settings.verify.button")}
+                title={t("settings.verify.button")}
+              >
+                {verifying ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <ShieldCheck className="size-3.5" />
+                )}
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -1247,6 +1355,7 @@ export function SettingsContent() {
     toggleKey,
     updateLabel,
     removeKey,
+    verifyKey,
   } = useApiKeys();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -1435,11 +1544,7 @@ export function SettingsContent() {
                 />
                 {t("settings.refreshButton")}
               </Button>
-              <AddKeyDialog
-                onAdd={async (key, label) => {
-                  await addKey(key, label);
-                }}
-              />
+              <AddKeyDialog onAdd={(key, label) => addKey(key, label)} />
             </div>
           </div>
 
@@ -1468,11 +1573,7 @@ export function SettingsContent() {
                   {t("settings.emptyState.description")}
                 </p>
                 <div className="mt-4">
-                  <AddKeyDialog
-                    onAdd={async (key, label) => {
-                      await addKey(key, label);
-                    }}
-                  />
+                  <AddKeyDialog onAdd={(key, label) => addKey(key, label)} />
                 </div>
               </CardContent>
             </Card>
@@ -1518,6 +1619,7 @@ export function SettingsContent() {
                       throw err;
                     }
                   }}
+                  onVerify={async () => (await verifyKey(k.id)).verification}
                 />
               ))}
             </div>
