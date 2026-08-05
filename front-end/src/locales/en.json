@@ -861,5 +861,32 @@
     "shortcuts": {
       "readQuestion": "Read question"
     }
+  },
+  "updates": {
+    "sectionTitle": "App version",
+    "sectionDescription": "Check GitHub for a newer release of Generate Quiz.",
+    "currentVersion": "Installed",
+    "latestVersion": "Latest on GitHub",
+    "upToDate": "You're running the latest version.",
+    "newRelease": "A new release is available",
+    "publishedAt": "published {{date}}",
+    "checkNow": "Check for updates",
+    "checking": "Checking…",
+    "download": "Download",
+    "later": "Later",
+    "lastChecked": "Last checked {{time}}",
+    "unsupported": "Update checks are only available in the desktop app.",
+    "openFailed": "Couldn't open the download page.",
+    "badgeAriaLabel": "Settings — version {{version}} is available",
+    "notice": {
+      "title": "Version {{version}} is available",
+      "description": "You're on {{current}}. Download the new build from GitHub."
+    },
+    "errors": {
+      "offline": "Couldn't reach GitHub. Check your internet connection.",
+      "rate-limited": "GitHub rate limit reached. Try again in a while.",
+      "no-release": "No published release was found for this app.",
+      "unexpected": "Update check failed."
+    }
   }
 }

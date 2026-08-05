@@ -861,5 +861,32 @@
     "shortcuts": {
       "readQuestion": "Đọc câu hỏi"
     }
+  },
+  "updates": {
+    "sectionTitle": "Phiên bản ứng dụng",
+    "sectionDescription": "Kiểm tra trên GitHub xem đã có bản phát hành mới chưa.",
+    "currentVersion": "Đang dùng",
+    "latestVersion": "Mới nhất trên GitHub",
+    "upToDate": "Bạn đang dùng phiên bản mới nhất.",
+    "newRelease": "Đã có bản phát hành mới",
+    "publishedAt": "phát hành {{date}}",
+    "checkNow": "Kiểm tra cập nhật",
+    "checking": "Đang kiểm tra…",
+    "download": "Tải về",
+    "later": "Để sau",
+    "lastChecked": "Kiểm tra lúc {{time}}",
+    "unsupported": "Chức năng kiểm tra cập nhật chỉ có trên bản desktop.",
+    "openFailed": "Không mở được trang tải về.",
+    "badgeAriaLabel": "Cài đặt — đã có phiên bản {{version}}",
+    "notice": {
+      "title": "Đã có phiên bản {{version}}",
+      "description": "Bạn đang dùng {{current}}. Tải bản mới trên GitHub để cập nhật."
+    },
+    "errors": {
+      "offline": "Không kết nối được tới GitHub. Kiểm tra lại mạng.",
+      "rate-limited": "GitHub đang giới hạn truy vấn. Thử lại sau ít phút.",
+      "no-release": "Chưa có bản phát hành nào cho ứng dụng này.",
+      "unexpected": "Kiểm tra cập nhật thất bại."
+    }
   }
 }

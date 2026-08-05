@@ -13,6 +13,7 @@ import { ipcMainHandle, ipcMainHandleWithArg, isDev } from "./util.js";
 import { getStationData, pollResource } from "./resourceManager.js";
 import { getAssetsPath, getPreloadPath, getUIPath } from "./pathResolver.js";
 import { killBackend, startBackend } from "./backendManager.js";
+import { checkForUpdate, isAllowedReleaseUrl } from "./updateChecker.js";
 import type { ChildProcess } from "node:child_process";
 
 let backendProcess: ChildProcess | null = null;
@@ -150,6 +151,16 @@ app.on("ready", async () => {
   // rejects embedded webviews, and their scripts would violate our CSP.
   ipcMainHandleWithArg("openExternalUrl", async (url) => {
     if (!isAllowedExternalUrl(url)) return false;
+    await shell.openExternal(url);
+    return true;
+  });
+
+  // Update checks live here, not in the renderer: api.github.com is outside the
+  // renderer's connect-src allowlist.
+  ipcMainHandleWithArg("checkForUpdate", (force) => checkForUpdate(force));
+
+  ipcMainHandleWithArg("openReleasePage", async (url) => {
+    if (!isAllowedReleaseUrl(url)) return false;
     await shell.openExternal(url);
     return true;
   });
