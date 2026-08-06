@@ -13,16 +13,23 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import date, datetime, timezone
-from zoneinfo import ZoneInfo
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.db import db
 from app.features.api_keys.crypto import decrypt, encrypt
 
 logger = logging.getLogger(__name__)
 
-# Gemini free-tier RPD resets at midnight Pacific Time.
-PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+# Gemini free-tier RPD resets at midnight Pacific Time. Windows ships no IANA tz
+# database, so this resolves through the `tzdata` package — and a build that
+# missed it used to take the whole backend down at import time. A fixed offset is
+# wrong for half the year but keeps the app running; the bundle is the real fix.
+try:
+    PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+except ZoneInfoNotFoundError:
+    logger.warning("No IANA tz database found; RPD reset falls back to fixed UTC-8")
+    PACIFIC_TZ = timezone(timedelta(hours=-8))
 
 
 def today_pst() -> date:

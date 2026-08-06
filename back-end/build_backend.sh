@@ -20,11 +20,11 @@ echo "========================================"
 
 # 1. Ensure PyInstaller is installed
 echo ""
-echo "[1/4] Checking PyInstaller..."
+echo "[1/5] Checking PyInstaller..."
 python3 -m pip install pyinstaller --quiet 2>/dev/null || python -m pip install pyinstaller --quiet
 
 # 2. Run PyInstaller in one-dir mode
-echo "[2/4] Running PyInstaller..."
+echo "[2/5] Running PyInstaller..."
 cd "$SCRIPT_DIR"
 
 PYTHON_CMD="python3"
@@ -45,14 +45,29 @@ $PYTHON_CMD -m PyInstaller \
     --hidden-import "pdfplumber" \
     --hidden-import "fitz" \
     --hidden-import "google.generativeai" \
+    --hidden-import "google.genai" \
+    --hidden-import "anthropic" \
+    --hidden-import "openai" \
+    --hidden-import "docx" \
+    --hidden-import "pptx" \
+    --hidden-import "pandas" \
+    --hidden-import "openpyxl" \
+    --hidden-import "xlrd" \
     --hidden-import "youtube_transcript_api" \
     --hidden-import "yt_dlp" \
     --hidden-import "chromadb" \
     --hidden-import "onnxruntime" \
+    --hidden-import "tokenizers" \
+    --hidden-import "tqdm" \
     --hidden-import "PIL" \
     --hidden-import "numpy" \
     --hidden-import "pdf2image" \
     --collect-all "google.generativeai" \
+    --collect-all "google.genai" \
+    --collect-all "anthropic" \
+    --collect-all "openai" \
+    --collect-all "tzdata" \
+    --collect-all "tokenizers" \
     --collect-data "chromadb" \
     --collect-submodules "chromadb" \
     --collect-binaries "chromadb" \
@@ -67,7 +82,7 @@ $PYTHON_CMD -m PyInstaller \
     app.py
 
 # 3. Copy output to front-end/backend/
-echo "[3/4] Copying to front-end/backend/ ..."
+echo "[3/5] Copying to front-end/backend/ ..."
 rm -rf "$FRONTEND_BACKEND_DIR"
 cp -R "$SCRIPT_DIR/dist/WebQuizBackend" "$FRONTEND_BACKEND_DIR"
 
@@ -80,13 +95,20 @@ if [ -d "$DISCOVERY_CACHE" ]; then
     echo "Removed googleapiclient discovery_cache documents (~96MB)"
 fi
 
-# 4. Verify
-if [ -f "$FRONTEND_BACKEND_DIR/WebQuizBackend" ]; then
-    SIZE=$(du -sh "$FRONTEND_BACKEND_DIR/WebQuizBackend" | cut -f1)
-    echo ""
-    echo "[4/4] SUCCESS: $FRONTEND_BACKEND_DIR/WebQuizBackend ($SIZE)"
-else
+# 4. Verify the executable exists
+EXE="$FRONTEND_BACKEND_DIR/WebQuizBackend"
+if [ ! -f "$EXE" ]; then
     echo "ERROR: WebQuizBackend executable not found!" >&2
+    exit 1
+fi
+echo "[4/5] Built: $EXE ($(du -sh "$EXE" | cut -f1))"
+
+# 5. Prove the bundle can import everything the app loads lazily. Without this,
+#    a missing package only surfaces on a user's machine — which is exactly how
+#    three releases shipped a backend that could not start.
+echo "[5/5] Running bundle self-check..."
+if ! "$EXE" --selfcheck; then
+    echo "ERROR: bundle self-check failed - do not ship this build" >&2
     exit 1
 fi
 

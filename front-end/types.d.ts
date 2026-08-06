@@ -58,6 +58,8 @@ type UnsubscribeFunction = () => void;
 
 interface Window {
   electron: {
+    /** Where the bundled backend is actually listening — see APP_CONFIG.API_URL. */
+    apiBaseUrl?: string,
     subscribeStatistics: (callback: (statistics: Statistics) => void) => UnsubscribeFunction,
     getStaticData: () => Promise<StationData>,
     selectFolder?: () => Promise<string | null>,

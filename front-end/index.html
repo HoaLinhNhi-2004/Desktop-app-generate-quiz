@@ -5,9 +5,12 @@
     <link rel="icon" type="image/png" href="/src/assets/trayIcon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Generate Quiz</title>
+    <!-- Loopback is wildcarded by port because the desktop app falls back to an
+         ephemeral port when 5000 is taken; the Electron main process still pins
+         the exact origin in the response-header CSP. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://localhost:5000; frame-src https://www.youtube.com;"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://localhost:* http://127.0.0.1:*; frame-src https://www.youtube.com blob:;"
     />
   </head>
   <body>

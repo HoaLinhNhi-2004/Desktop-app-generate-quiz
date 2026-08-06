@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Generate Quiz</title>
+    <style>
+      /* Matches --background of the .dark / .light roots in src/ui/index.css so
+         the window does not flash a different colour when the app takes over. */
+      :root {
+        color-scheme: dark light;
+        --bg: #0a0a0a;
+        --fg: #fafafa;
+        --muted: #a1a1aa;
+        --ring: #27272a;
+        --accent: #7c5cff;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #ffffff;
+          --fg: #18181b;
+          --muted: #71717a;
+          --ring: #e4e4e7;
+        }
+      }
+      body {
+        margin: 0;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        user-select: none;
+      }
+      .spinner {
+        width: 34px;
+        height: 34px;
+        border: 3px solid var(--ring);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      p {
+        margin: 0;
+        font-size: 14px;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 12px;
+        max-width: 340px;
+        text-align: center;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="spinner"></div>
+    <p>Đang khởi động dịch vụ nền…</p>
+    <p class="hint">
+      Starting the backend. Lần chạy đầu tiên sau khi cài đặt có thể mất một
+      phút — the first launch after installing can take a minute.
+    </p>
+  </body>
+</html>

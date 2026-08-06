@@ -18,6 +18,11 @@ export function getUIPath() {
   return path.join(app.getAppPath(), "/dist-react/index.html");
 }
 
+/** Static holding page shown while the bundled backend boots (copied from public/). */
+export function getSplashPath() {
+  return path.join(app.getAppPath(), "/dist-react/splash.html");
+}
+
 export function getAssetsPath() {
   return path.join(app.getAppPath(), isDev() ? "." : "..", "src", "assets");
 }

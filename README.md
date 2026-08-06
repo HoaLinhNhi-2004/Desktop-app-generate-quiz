@@ -59,6 +59,7 @@ The easiest way to use the application. You do **not** need to install Python, N
 4. **Run** the application executable — that's it!
 
 > **⚠️ First launch notes:**
+> - The app starts its own backend — there is nothing to install and no terminal to open. A *"Đang khởi động dịch vụ nền… / Starting the backend"* screen shows while it comes up; the first launch after extracting can take up to a minute because the antivirus scans the bundle. If it cannot start, the app tells you why and where the log is instead of failing silently.
 > - **Windows:** SmartScreen may show *"Windows protected your PC"*. Click **"More info"** → **"Run anyway"**. This is normal for open-source apps without a paid code-signing certificate.
 > - **macOS:** Right-click the app → **Open** the first time (to allow unsigned apps).
 > - **Linux:** You may need to run `chmod +x` on the executable first.

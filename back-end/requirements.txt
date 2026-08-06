@@ -4,6 +4,7 @@ flask-cors
 flask-sqlalchemy
 python-dotenv
 cryptography  # AES-GCM at-rest encryption for LLM API keys
+tzdata  # Windows ships no IANA tz database; zoneinfo needs this one
 
 # Image processing
 pillow
@@ -14,6 +15,13 @@ pdfplumber
 pdf2image
 PyMuPDF  # text block bounding boxes for heatmap overlay
 
+# Office documents
+python-docx  # quizz/docx_service.py
+python-pptx  # folder/smart_import_service.py slide preview
+pandas  # quizz/spreadsheet_service.py
+openpyxl  # pandas read_excel engine for .xlsx
+xlrd  # pandas read_excel engine for legacy .xls
+
 # LLM providers
 requests
 google-generativeai  # Gemini provider
@@ -23,6 +31,10 @@ openai  # OpenAI + every OpenAI-compatible provider (DeepSeek, Groq, xAI, Mistra
 
 # Vector database
 chromadb
+# chromadb's default ONNX embedder pulls these through importlib at first use;
+# declared here so packaged builds bundle them (see selfcheck.py).
+tokenizers
+tqdm
 
 # YouTube transcript
 youtube-transcript-api>=0.6

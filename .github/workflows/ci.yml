@@ -89,11 +89,21 @@ jobs:
         working-directory: back-end
         run: ${{ matrix.backend-script }}
 
+      # Same gate as the release pipeline: prove the bundle imports everything it
+      # loads lazily, then prove it actually boots and answers /api/health.
       - name: Verify backend artifact
         shell: bash
         run: |
           echo "📦 Backend contents:"
           ls -la front-end/backend/ | head -20
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            EXE=front-end/backend/WebQuizBackend.exe
+          else
+            EXE=front-end/backend/WebQuizBackend
+          fi
+          test -f "$EXE" || { echo "❌ $EXE not found"; exit 1; }
+          "$EXE" --selfcheck || { echo "❌ Bundle is missing dependencies"; exit 1; }
+          python back-end/smoke_test_bundle.py "$EXE" || { echo "❌ Bundled backend does not start"; exit 1; }
           echo "✅ Backend build verified"
 
       # ── Node.js (for Electron build) ───────────────────────

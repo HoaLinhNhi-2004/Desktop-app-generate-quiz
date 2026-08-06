@@ -7,12 +7,25 @@ Run with:
 Or with Flask CLI:
   flask run --port 5000
 
+Verify a packaged build has every dependency it needs:
+  WebQuizBackend --selfcheck
+
 When USER_DATA_PATH is set (desktop/Electron), runs with host 127.0.0.1 and debug=False.
+The port comes from PORT (default 5000) — Electron picks a free one and passes it in.
 """
 
 import os
+import sys
 import logging
-from app import create_app
+
+# Runs before create_app(): a dependency missing from a packaged build can take
+# the app factory down at import time, and then there is nothing left to report.
+if "--selfcheck" in sys.argv:
+    from selfcheck import run as _run_selfcheck
+
+    sys.exit(_run_selfcheck())
+
+from app import create_app  # noqa: E402 — must follow the --selfcheck guard
 
 # Configure root logger FIRST
 logging.basicConfig(

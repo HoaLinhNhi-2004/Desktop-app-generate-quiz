@@ -145,16 +145,22 @@ jobs:
         working-directory: back-end
         run: ${{ matrix.backend-script }}
 
+      # The bundled backend is what users actually run — a build that cannot
+      # start makes the whole app dead on arrival, so boot it here rather than
+      # trusting that PyInstaller found every lazily-imported package.
       - name: Verify backend artifact
         shell: bash
         run: |
           echo "📦 Backend contents:"
           ls -la front-end/backend/ | head -20
           if [ "${{ matrix.platform }}" = "Windows" ]; then
-            test -f front-end/backend/WebQuizBackend.exe || { echo "❌ WebQuizBackend.exe not found"; exit 1; }
+            EXE=front-end/backend/WebQuizBackend.exe
           else
-            test -f front-end/backend/WebQuizBackend || { echo "❌ WebQuizBackend not found"; exit 1; }
+            EXE=front-end/backend/WebQuizBackend
           fi
+          test -f "$EXE" || { echo "❌ $EXE not found"; exit 1; }
+          "$EXE" --selfcheck || { echo "❌ Bundle is missing dependencies"; exit 1; }
+          python back-end/smoke_test_bundle.py "$EXE" || { echo "❌ Bundled backend does not start"; exit 1; }
           echo "✅ Backend build verified"
 
       # ── Node.js (for Electron build) ───────────────────────

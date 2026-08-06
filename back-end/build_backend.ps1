@@ -21,15 +21,18 @@ Write-Host "  Building Flask backend (PyInstaller)" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
 # 1. Ensure PyInstaller is installed
-Write-Host "`n[1/4] Checking PyInstaller..." -ForegroundColor Yellow
+Write-Host "`n[1/5] Checking PyInstaller..." -ForegroundColor Yellow
 python -m pip install pyinstaller --quiet
 if ($LASTEXITCODE -ne 0) { throw "Failed to install PyInstaller" }
 
 # 2. Run PyInstaller in one-dir mode
-Write-Host "[2/4] Running PyInstaller..." -ForegroundColor Yellow
+Write-Host "[2/5] Running PyInstaller..." -ForegroundColor Yellow
 Push-Location $BackendDir
 try {
-    pyinstaller `
+    # Invoked through `python -m` (as build_backend.sh does) so the build always
+    # uses the interpreter whose site-packages PyInstaller will scan — a stray
+    # pyinstaller.exe earlier on PATH would bundle a different environment.
+    python -m PyInstaller `
         --noconfirm `
         --clean `
         --name WebQuizBackend `
@@ -44,14 +47,29 @@ try {
         --hidden-import "pdfplumber" `
         --hidden-import "fitz" `
         --hidden-import "google.generativeai" `
+        --hidden-import "google.genai" `
+        --hidden-import "anthropic" `
+        --hidden-import "openai" `
+        --hidden-import "docx" `
+        --hidden-import "pptx" `
+        --hidden-import "pandas" `
+        --hidden-import "openpyxl" `
+        --hidden-import "xlrd" `
         --hidden-import "youtube_transcript_api" `
         --hidden-import "yt_dlp" `
         --hidden-import "chromadb" `
         --hidden-import "onnxruntime" `
+        --hidden-import "tokenizers" `
+        --hidden-import "tqdm" `
         --hidden-import "PIL" `
         --hidden-import "numpy" `
         --hidden-import "pdf2image" `
         --collect-all "google.generativeai" `
+        --collect-all "google.genai" `
+        --collect-all "anthropic" `
+        --collect-all "openai" `
+        --collect-all "tzdata" `
+        --collect-all "tokenizers" `
         --collect-data "chromadb" `
         --collect-submodules "chromadb" `
         --collect-binaries "chromadb" `
@@ -71,7 +89,7 @@ try {
 }
 
 # 3. Copy output to front-end/backend/
-Write-Host "[3/4] Copying to front-end/backend/ ..." -ForegroundColor Yellow
+Write-Host "[3/5] Copying to front-end/backend/ ..." -ForegroundColor Yellow
 if (Test-Path $FrontendBackendDir) {
     Remove-Item -Recurse -Force $FrontendBackendDir
 }
@@ -86,13 +104,19 @@ if (Test-Path $discoveryCache) {
     Write-Host "Removed googleapiclient discovery_cache documents (~96MB)" -ForegroundColor Green
 }
 
-# 4. Verify
+# 4. Verify the executable exists
 $exePath = Join-Path $FrontendBackendDir "WebQuizBackend.exe"
-if (Test-Path $exePath) {
-    $size = [math]::Round((Get-Item $exePath).Length / 1MB, 1)
-    Write-Host "`n[4/4] SUCCESS: $exePath ($size MB)" -ForegroundColor Green
-} else {
+if (-not (Test-Path $exePath)) {
     throw "WebQuizBackend.exe not found at $exePath"
 }
+$size = [math]::Round((Get-Item $exePath).Length / 1MB, 1)
+Write-Host "[4/5] Built: $exePath ($size MB)" -ForegroundColor Green
+
+# 5. Prove the bundle can import everything the app loads lazily. Without this,
+#    a missing package only surfaces on a user's machine — which is exactly how
+#    three releases shipped a backend that could not start.
+Write-Host "[5/5] Running bundle self-check..." -ForegroundColor Yellow
+& $exePath --selfcheck
+if ($LASTEXITCODE -ne 0) { throw "Bundle self-check failed - do not ship this build" }
 
 Write-Host "`nBackend build complete!" -ForegroundColor Cyan

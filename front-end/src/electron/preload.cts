@@ -1,6 +1,13 @@
 const electron = require("electron");
 
+// Synchronous on purpose: the renderer reads this while its config module is
+// evaluating, before any request goes out. The port is only ever not 5000 when
+// something else already owns 5000 on the user's machine.
+const apiBaseUrl: string =
+  electron.ipcRenderer.sendSync("apiBaseUrl") || "http://localhost:5000";
+
 electron.contextBridge.exposeInMainWorld("electron", {
+  apiBaseUrl,
   subscribeStatistics: (callback) =>
     ipcOn("statistics", (stats) => {
       callback(stats);
