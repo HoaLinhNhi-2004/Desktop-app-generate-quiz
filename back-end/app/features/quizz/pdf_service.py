@@ -3,32 +3,36 @@ PDF Service - Extract text from PDF files
 """
 
 import os
-import sys
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+OCR_RENDER_DPI = 200
 
-def _get_poppler_path() -> Optional[str]:
-    """When packaged (PyInstaller) or POPPLER_PATH is set, return path to poppler binaries."""
-    env_path = os.getenv("POPPLER_PATH", "").strip()
-    if env_path and os.path.isdir(env_path):
-        return env_path
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        # PyInstaller onefile: _MEIPASS is temp extract dir
-        base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
-    elif getattr(sys, "frozen", False):
-        # PyInstaller onedir: exe dir
-        base = os.path.dirname(sys.executable)
-    else:
-        return None
-    # Windows: common layout when bundling poppler
-    for subdir in ("poppler/Library/bin", "poppler/bin", "poppler"):
-        candidate = os.path.join(base, subdir)
-        if os.path.isdir(candidate):
-            return candidate
-    return None
+
+def render_pdf_pages(pdf_path: str, out_dir: str, dpi: int = OCR_RENDER_DPI) -> list[str]:
+    """Rasterise every page to a PNG in `out_dir`, returning the paths in order.
+
+    Rendering goes through PyMuPDF rather than pdf2image. pdf2image shells out to
+    poppler, a native toolchain that is not a Python package and so cannot travel
+    inside the PyInstaller bundle: on a machine without it — which is every
+    machine that installs the desktop app — scanned PDFs extracted to nothing,
+    and material uploads failed outright with "Is poppler installed and in PATH?".
+    PyMuPDF is already a dependency (heatmap bounding boxes) and needs nothing
+    outside the wheel.
+    """
+    import fitz
+
+    paths: list[str] = []
+    with fitz.open(pdf_path) as doc:
+        for index, page in enumerate(doc):
+            image_path = os.path.join(out_dir, f"page_{index}.png")
+            # Freed each iteration rather than held in a list: a 200-dpi A4 page
+            # is ~11MB of pixels, and these PDFs run to hundreds of pages.
+            pixmap = page.get_pixmap(dpi=dpi)
+            pixmap.save(image_path)
+            paths.append(image_path)
+    return paths
 
 
 def extract_text_from_pdf(pdf_path: str) -> str:
@@ -122,26 +126,17 @@ def extract_text_from_pdf_paged(pdf_path: str, lang: str = "vi") -> tuple[str, i
 def _ocr_paged(pdf_path: str, lang: str = "vi", expected_pages: int = 0) -> tuple[str, int]:
     """Per-page OCR extraction returning (annotated_text, total_pages)."""
     import tempfile
-    try:
-        from pdf2image import convert_from_path
-        from .ocr_service import extract_text_from_image
-    except ImportError:
-        return ("", expected_pages)
+    from .ocr_service import extract_text_from_image
+
     parts: list[str] = []
-    poppler_path = _get_poppler_path()
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
-            kwargs: dict = {"dpi": 200, "output_folder": tmpdir}
-            if poppler_path:
-                kwargs["poppler_path"] = poppler_path
-            images = convert_from_path(pdf_path, **kwargs)
-            for i, img in enumerate(images):
-                img_path = os.path.join(tmpdir, f"page_{i}.png")
-                img.save(img_path, "PNG")
+            image_paths = render_pdf_pages(pdf_path, tmpdir)
+            for i, img_path in enumerate(image_paths):
                 text = extract_text_from_image(img_path, lang=lang)
                 if text.strip():
                     parts.append(f"--- TRANG {i + 1} ---\n{text.strip()}")
-            total = len(images)
+            total = len(image_paths)
         except Exception as e:
             logger.error("_ocr_paged failed for %s: %s", os.path.basename(pdf_path), e)
             return ("", expected_pages)
@@ -174,26 +169,16 @@ def get_pdf_page_stats(pdf_path: str) -> list[dict]:
 def _pdf_to_images_ocr(pdf_path: str, lang: str = "vi") -> str:
     """Convert PDF pages to images and run OCR"""
     import tempfile
-    from pdf2image import convert_from_path
     from .ocr_service import extract_text_from_image
 
     all_texts = []
-    poppler_path = _get_poppler_path()
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
-            kwargs = {"dpi": 200, "output_folder": tmpdir}
-            if poppler_path:
-                kwargs["poppler_path"] = poppler_path
-            images = convert_from_path(pdf_path, **kwargs)
-            for i, img in enumerate(images):
-                img_path = os.path.join(tmpdir, f"page_{i}.png")
-                img.save(img_path, "PNG")
+            for img_path in render_pdf_pages(pdf_path, tmpdir):
                 text = extract_text_from_image(img_path, lang=lang)
                 if text.strip():
                     all_texts.append(text)
         except Exception as e:
             logger.error(f"PDF to image OCR failed: {e}")
-            # If pdf2image is not available, just return what we have
-            logger.warning("Hint: pdf2image requires poppler to be installed")
 
     return "\n\n".join(all_texts)

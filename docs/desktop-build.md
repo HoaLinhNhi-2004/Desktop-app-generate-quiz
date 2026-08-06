@@ -64,4 +64,4 @@ When you add a third-party import to the backend:
 
 - The `front-end/backend/` directory must exist (containing `WebQuizBackend.exe`) when running `dist:win`; if the backend hasn't been built yet, run `build_backend.ps1` first.
 - Dev mode (`npm run dev`): does not spawn the backend; you need to run `python app.py` in `back-end` separately.
-- Scanned-PDF OCR calls `pdf2image`, which needs poppler binaries. They are not bundled — `_get_poppler_path()` looks for a `poppler/` folder next to the executable or `POPPLER_PATH`. Without them scanned PDFs yield no text (the app stays up).
+- Scanned-PDF OCR rasterises pages with PyMuPDF (`render_pdf_pages()` in `pdf_service.py`). Do not reach for `pdf2image` here: it shells out to poppler, a native toolchain that cannot ship inside the PyInstaller bundle, and its absence is what made scanned PDFs extract to nothing on every installed copy.

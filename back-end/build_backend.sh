@@ -61,7 +61,6 @@ $PYTHON_CMD -m PyInstaller \
     --hidden-import "tqdm" \
     --hidden-import "PIL" \
     --hidden-import "numpy" \
-    --hidden-import "pdf2image" \
     --collect-all "google.generativeai" \
     --collect-all "google.genai" \
     --collect-all "anthropic" \

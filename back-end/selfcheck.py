@@ -33,8 +33,7 @@ REQUIRED_MODULES: list[tuple[str, str]] = [
     ("tokenizers", "tokenising chunks before embedding"),
     ("tqdm", "downloading the embedding model on first use"),
     ("pdfplumber", "PDF text extraction"),
-    ("fitz", "PDF heatmap bounding boxes"),
-    ("pdf2image", "scanned-PDF vision OCR"),
+    ("fitz", "PDF heatmap bounding boxes and scanned-PDF page rendering"),
     ("PIL", "image handling"),
     ("numpy", "image handling"),
     ("docx", "DOCX material import"),
@@ -52,6 +51,41 @@ REQUIRED_MODULES: list[tuple[str, str]] = [
 ]
 
 
+def _check_timezone_database() -> str | None:
+    """zoneinfo resolves against a tz database Windows does not ship, so `tzdata`
+    being importable proves nothing — the lookup itself has to work."""
+    from zoneinfo import ZoneInfo
+
+    ZoneInfo("America/Los_Angeles")
+    return None
+
+
+def _check_pdf_rendering() -> str | None:
+    """Rasterise a page, the operation scanned-PDF OCR is built on.
+
+    This used to run through pdf2image + poppler, a native toolchain that cannot
+    live inside the bundle, so every installed copy silently extracted nothing
+    from a scanned PDF. Rendering is PyMuPDF's job now, and this proves it works
+    in the frozen executable rather than only in a developer's environment.
+    """
+    import fitz
+
+    with fitz.open() as doc:
+        page = doc.new_page(width=200, height=200)
+        page.insert_text((20, 100), "selfcheck")
+        png = page.get_pixmap(dpi=72).tobytes("png")
+    if len(png) < 100:
+        return "rendered an empty image"
+    return None
+
+
+# (label, what breaks, callable) — capabilities that an import alone cannot prove.
+CAPABILITY_CHECKS = [
+    ("tzdata", "the Gemini daily-quota reset (and used to kill startup)", _check_timezone_database),
+    ("PDF page rendering", "scanned-PDF OCR — it would extract nothing", _check_pdf_rendering),
+]
+
+
 def run() -> int:
     """Import every required module and report what is missing. 0 == healthy."""
     failures: list[str] = []
@@ -62,24 +96,20 @@ def run() -> int:
         except Exception as exc:
             failures.append(f"  {name} — breaks {purpose}\n      {type(exc).__name__}: {exc}")
 
-    # Not an import: zoneinfo resolves against a tz database that Windows does
-    # not ship, so the package being importable proves nothing on its own.
-    try:
-        from zoneinfo import ZoneInfo
-
-        ZoneInfo("America/Los_Angeles")
-    except Exception as exc:
-        failures.append(
-            "  tzdata — breaks Gemini daily-quota reset (and used to kill startup)\n"
-            f"      {type(exc).__name__}: {exc}"
-        )
+    for label, purpose, check in CAPABILITY_CHECKS:
+        try:
+            problem = check()
+        except Exception as exc:
+            problem = f"{type(exc).__name__}: {exc}"
+        if problem:
+            failures.append(f"  {label} — breaks {purpose}\n      {problem}")
 
     if failures:
-        print(f"SELFCHECK FAILED — {len(failures)} module(s) missing from this build:")
+        print(f"SELFCHECK FAILED — {len(failures)} check(s) failed for this build:")
         print("\n".join(failures))
         return 1
 
-    print(f"SELFCHECK OK — {len(REQUIRED_MODULES) + 1} checks passed")
+    print(f"SELFCHECK OK — {len(REQUIRED_MODULES) + len(CAPABILITY_CHECKS)} checks passed")
     return 0
 
 

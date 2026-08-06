@@ -12,8 +12,7 @@ numpy
 
 # PDF processing
 pdfplumber
-pdf2image
-PyMuPDF  # text block bounding boxes for heatmap overlay
+PyMuPDF>=1.19  # heatmap bounding boxes + page rendering for OCR (get_pixmap(dpi=))
 
 # Office documents
 python-docx  # quizz/docx_service.py

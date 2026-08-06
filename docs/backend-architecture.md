@@ -192,7 +192,7 @@ When `USER_DATA_PATH` is set (desktop/Electron): host `127.0.0.1`, debug off, CO
 
 - **Web:** flask, flask-cors, flask-sqlalchemy, python-dotenv
 - **Image:** pillow, numpy
-- **PDF:** pdfplumber, pdf2image
+- **PDF:** pdfplumber, PyMuPDF (bounding boxes + page rendering for OCR)
 - **LLM:** requests, google-generativeai, google-genai
 - **YouTube:** youtube-transcript-api
 

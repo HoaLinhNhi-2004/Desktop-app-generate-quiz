@@ -221,28 +221,21 @@ def _extract_pdf(file_path: str, emit=_noop) -> str:
 
 
 def _ocr_pdf(file_path: str, emit=_noop) -> str:
-    """Convert PDF pages to images and run Gemini OCR on each."""
+    """Convert PDF pages to images and run vision OCR on each."""
     import tempfile
-    from pdf2image import convert_from_path
     from app.features.quizz.ocr_service import extract_text_from_image
-    from app.features.quizz.pdf_service import _get_poppler_path
+    from app.features.quizz.pdf_service import render_pdf_pages
 
-    poppler_path = _get_poppler_path()
     all_texts: list[str] = []
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        kwargs: dict = {"dpi": 200, "output_folder": tmpdir}
-        if poppler_path:
-            kwargs["poppler_path"] = poppler_path
-
-        images = convert_from_path(file_path, **kwargs)
-        emit("stage", {"stage": "ocr", "current": 0, "total": len(images)})
-        for i, img in enumerate(images):
-            img_path = os.path.join(tmpdir, f"page_{i}.png")
-            img.save(img_path, "PNG")
+        image_paths = render_pdf_pages(file_path, tmpdir)
+        total = len(image_paths)
+        emit("stage", {"stage": "ocr", "current": 0, "total": total})
+        for i, img_path in enumerate(image_paths):
             text = extract_text_from_image(img_path)
             if text.strip():
                 all_texts.append(text.strip())
-            emit("stage", {"stage": "ocr", "current": i + 1, "total": len(images)})
+            emit("stage", {"stage": "ocr", "current": i + 1, "total": total})
 
     return "\n\n".join(all_texts)
