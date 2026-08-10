@@ -49,11 +49,16 @@ PROVIDERS: dict[str, ProviderSpec] = {
         id="gemini",
         display_name="Google Gemini",
         dialect="gemini",
-        key_pattern=re.compile(r"^AIza[A-Za-z0-9_\-]{30,}$"),
-        key_hint="AIza…",
+        # Two live formats: the legacy `AIza…` and the `AQ.…` keys AI Studio has
+        # been handing out since 2026. Both authenticate the same endpoint.
+        key_pattern=re.compile(r"^(AIza[A-Za-z0-9_\-]{30,}|AQ\.[A-Za-z0-9_\-]{20,})$"),
+        key_hint="AIza… / AQ.…",
         console_url="https://aistudio.google.com/app/apikey",
-        default_models=["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"],
-        model_keywords=["flash", "2.5", "2.0", "pro"],
+        # Prefer the `*-latest` aliases: Google closes dated models to new
+        # accounts ("no longer available to new users"), so ranking by version
+        # number hands a fresh key a chain it cannot call at all.
+        default_models=["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash"],
+        model_keywords=["flash", "latest", "pro"],
         free_tier=True,
     ),
     "anthropic": ProviderSpec(
