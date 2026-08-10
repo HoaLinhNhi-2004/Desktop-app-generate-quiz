@@ -44,11 +44,18 @@ export function useExtractText() {
 
 /**
  * Hook to list quiz sets for a folder (or all quiz sets)
+ *
+ * `refetchOnMount` overrides the global `false`: generation finishes after the
+ * user has left the folder page, so the invalidation on `done` lands on an
+ * inactive query — React Query flags it stale but never refetches it, and with
+ * the global default the remounted history tab would keep serving the cached
+ * list without the quiz that was just created.
  */
 export function useQuizSets(folderId?: string) {
   return useQuery<QuizSetSummary[], Error>({
     queryKey: ["quizSets", folderId ?? "all"],
     queryFn: () => getQuizSetsApi(folderId),
+    refetchOnMount: true,
   });
 }
 
