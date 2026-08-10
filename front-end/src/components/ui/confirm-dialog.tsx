@@ -15,7 +15,14 @@ import {
 } from "@/components/ui/alert-dialog"
 
 type ConfirmDialogProps = {
-  children: React.ReactNode
+  /**
+   * Trigger element. Omit it and drive `open`/`onOpenChange` instead when one
+   * shared dialog serves a long list — a trigger per row means a dialog root
+   * per row.
+   */
+  children?: React.ReactNode
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   title: string
   description?: string
   confirmLabel?: string
@@ -32,6 +39,8 @@ type ConfirmDialogProps = {
 
 export function ConfirmDialog({
   children,
+  open,
+  onOpenChange,
   title,
   description,
   confirmLabel,
@@ -47,10 +56,12 @@ export function ConfirmDialog({
     : undefined
 
   return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild onClick={swallow}>
-        {children}
-      </AlertDialogTrigger>
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      {children && (
+        <AlertDialogTrigger asChild onClick={swallow}>
+          {children}
+        </AlertDialogTrigger>
+      )}
       <AlertDialogContent onClick={swallow}>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>

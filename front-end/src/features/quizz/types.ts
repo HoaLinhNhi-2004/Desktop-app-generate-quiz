@@ -35,6 +35,13 @@ export interface QuizQuestion {
   sourceKeyword?: string[];
 }
 
+/** Ways a question can be incomplete — see `validation.ts`. */
+export type QuestionIssue =
+  | "empty-text"
+  | "empty-option"
+  | "no-correct-answer"
+  | "true-false-option-count";
+
 export interface QuizState {
   questions: QuizQuestion[];
   answers: Record<string, string>; // questionId -> selectedOptionId
