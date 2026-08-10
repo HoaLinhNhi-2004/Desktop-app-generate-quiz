@@ -426,6 +426,7 @@
     "pdfLoadError": "Không tải được PDF",
     "unknownError": "Lỗi không xác định",
     "loadingPdf": "Đang tải PDF...",
+    "loadingHeatmap": "Đang tải heatmap...",
     "page": "Trang",
     "pageN": "Trang {{n}}",
     "questions": "câu",

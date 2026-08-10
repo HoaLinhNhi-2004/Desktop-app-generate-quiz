@@ -426,6 +426,7 @@
     "pdfLoadError": "Failed to load PDF",
     "unknownError": "Unknown error",
     "loadingPdf": "Loading PDF...",
+    "loadingHeatmap": "Loading heatmap...",
     "page": "Page",
     "pageN": "Page {{n}}",
     "questions": "questions",

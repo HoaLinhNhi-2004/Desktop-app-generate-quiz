@@ -8,11 +8,17 @@
  * Interaction:
  *   • Click a question → PDF scrolls to the first source page + highlights all source pages
  *   • Clicking the active question again dismisses the highlight
+ *
+ * Pages are windowed with @tanstack/react-virtual: mounting every <Page> froze the
+ * UI on large documents (pdf.js advises against rendering more than ~25 at once,
+ * and real decks here run past 700).
  */
 
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { memo, useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Document, Page, pdfjs } from "react-pdf";
+import type { PageProps } from "react-pdf";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { cn } from "@/lib/utils";
@@ -53,6 +59,28 @@ interface PdfQuizViewerProps {
   questions: QuizQuestion[];
   quizTitle: string;
   quizSetId?: string;
+}
+
+type PageTextRenderer = NonNullable<PageProps["customTextRenderer"]>;
+
+/** Vertical gap above each page — inside the measured element so the virtualizer
+ *  accounts for it (getBoundingClientRect excludes margins), and on the leading
+ *  edge so item 0 starts at scroll offset 0 and scrollToIndex stays exact. It
+ *  also gives the "-top-5" page label its room. */
+const PAGE_GAP = 20;
+/** A4 in PDF points — used until getPage(1) reports the real viewport. */
+const FALLBACK_PAGE_WIDTH = 595;
+const FALLBACK_PAGE_HEIGHT = 842;
+/** Shared empty array: a fresh `[]` per render would defeat PdfPageItem's memo. */
+const EMPTY_BLOCKS: HeatmapBlock[] = [];
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(id);
+  }, [value, delayMs]);
+  return debounced;
 }
 
 // ─── Single question row ──────────────────────────────────────────────────────
@@ -262,6 +290,135 @@ const HEAT_LEGEND_PDF =
   HEAT_STOPS_PDF.map(([, h, s, l]) => `hsl(${h} ${s}% ${l}%)`).join(", ") +
   ")";
 
+// ─── Single virtualized PDF page ─────────────────────────────────────────────
+
+interface PdfPageItemProps {
+  pageNumber: number;
+  scale: number;
+  placeholderWidth: number;
+  placeholderHeight: number;
+  textRenderer: PageTextRenderer | undefined;
+  showHeatmap: boolean;
+  heatBlocks: HeatmapBlock[];
+  heatmapMaxCount: number;
+  heatCount: number;
+  heatIntensity: number;
+}
+
+const PdfPageItem = memo(function PdfPageItem({
+  pageNumber,
+  scale,
+  placeholderWidth,
+  placeholderHeight,
+  textRenderer,
+  showHeatmap,
+  heatBlocks,
+  heatmapMaxCount,
+  heatCount,
+  heatIntensity,
+}: PdfPageItemProps) {
+  const { t } = useTranslation();
+  const hasBlocks = heatBlocks.length > 0;
+
+  return (
+    <div style={{ paddingTop: PAGE_GAP }}>
+      <div className="relative shadow-sm">
+        {/* Page number label */}
+        <div className="absolute -top-5 left-0 z-20 text-[10px] text-muted-foreground select-none">
+          {t("pdfViewer.page")} {pageNumber}
+        </div>
+
+        <Page
+          pageNumber={pageNumber}
+          scale={scale}
+          renderTextLayer
+          renderAnnotationLayer={false}
+          customTextRenderer={textRenderer}
+          // A fixed-size placeholder keeps the virtualizer from measuring the
+          // tiny default "Loading page…" node and re-anchoring the scroll.
+          loading={
+            <div
+              className="bg-background"
+              style={{ width: placeholderWidth, height: placeholderHeight }}
+            />
+          }
+        />
+
+        {/* Heatmap overlay — block-level bounding boxes */}
+        {showHeatmap && (
+          <div className="absolute inset-0 z-10 pointer-events-none">
+            {hasBlocks &&
+              heatBlocks.map((block, bIdx) => {
+                const [x0, y0, x1, y1] = block.bbox;
+                const { pageWidth, pageHeight } = block;
+                const intensity =
+                  heatmapMaxCount > 0 ? block.count / heatmapMaxCount : 0;
+                // Convert PDF coordinates to percentages
+                const left = (x0 / pageWidth) * 100;
+                const top = (y0 / pageHeight) * 100;
+                const width = ((x1 - x0) / pageWidth) * 100;
+                const height = ((y1 - y0) / pageHeight) * 100;
+                return (
+                  <div
+                    key={bIdx}
+                    className="absolute rounded-sm transition-opacity duration-300 pointer-events-auto"
+                    title={`${block.count} keyword${block.count > 1 ? "s" : ""}: ${block.keywords.slice(0, 3).join(", ")}`}
+                    style={{
+                      left: `${left}%`,
+                      top: `${top}%`,
+                      width: `${width}%`,
+                      height: `${height}%`,
+                      background: thermalColorPdfAlpha(
+                        intensity,
+                        0.15 + intensity * 0.25,
+                      ),
+                      borderLeft: `3px solid ${thermalColorPdf(intensity)}`,
+                      boxShadow:
+                        intensity > 0.5
+                          ? `0 0 8px ${thermalColorPdfAlpha(intensity, 0.3)}`
+                          : "none",
+                    }}
+                  />
+                );
+              })}
+            {/* Fallback: page-level radial gradient if no blocks loaded yet */}
+            {!hasBlocks && heatCount > 0 && (
+              <div
+                className="absolute inset-0"
+                style={{
+                  background: `radial-gradient(ellipse 130% 110% at 50% 45%, ${thermalColorPdfAlpha(heatIntensity, 0.18 + heatIntensity * 0.18)} 0%, ${thermalColorPdfAlpha(heatIntensity, 0.06 + heatIntensity * 0.08)} 60%, transparent 92%)`,
+                }}
+              />
+            )}
+            {/* Heat badge on page */}
+            {heatCount > 0 && (
+              <div
+                className="absolute top-2 right-2 flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold text-white shadow-md pointer-events-auto z-20"
+                style={{ background: thermalColorPdf(heatIntensity) }}
+              >
+                <Flame className="size-3" />
+                {heatCount} {t("pdfViewer.questions")}
+                {hasBlocks && (
+                  <span className="text-[9px] opacity-80 ml-0.5">
+                    · {heatBlocks.length} {t("pdfViewer.zones")}
+                  </span>
+                )}
+              </div>
+            )}
+            {/* Side heat bar */}
+            {heatCount > 0 && (
+              <div
+                className="absolute left-0 top-0 bottom-0 w-1.5 rounded-l"
+                style={{ background: thermalColorPdf(heatIntensity) }}
+              />
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
 // ─── Main viewer ─────────────────────────────────────────────────────────────
 
 // Palette of overlay colors (cycled per question)
@@ -319,9 +476,16 @@ export function PdfQuizViewer({
   const [heatmapBlocks, setHeatmapBlocks] = useState<HeatmapBlock[]>([]);
   const [heatmapMaxCount, setHeatmapMaxCount] = useState(0);
   const [heatmapLoading, setHeatmapLoading] = useState(false);
+  const [basePage, setBasePage] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
 
-  // One ref per PDF page for scrolling
-  const pageRefs = useRef<Array<HTMLDivElement | null>>([]);
+  // Zoom buttons drive `scale` for instant % feedback; rasterizing lags behind so
+  // rapid clicking costs one re-render of the mounted pages instead of one each.
+  const renderScale = useDebouncedValue(scale, 250);
+
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   // Page distribution heatmap data
   const pageDistribution = useMemo(
@@ -333,12 +497,59 @@ export function PdfQuizViewer({
     [pageDistribution],
   );
 
-  const scrollToPage = (page: number) => {
-    if (page >= 1 && page <= numPages) {
-      const el = pageRefs.current[page - 1];
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  const estimatedPageHeight =
+    (basePage?.height ?? FALLBACK_PAGE_HEIGHT) * renderScale;
+
+  const virtualizer = useVirtualizer({
+    count: numPages,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => Math.round(estimatedPageHeight) + PAGE_GAP,
+    overscan: 2,
+    getItemKey: (index) => index + 1,
+  });
+
+  // Zoom changes every page height, so the measurement cache is stale. Re-anchor
+  // on the page the user was looking at instead of drifting.
+  useEffect(() => {
+    const anchorIndex = virtualizer.getVirtualItems()[0]?.index;
+    virtualizer.measure();
+    if (anchorIndex != null) {
+      virtualizer.scrollToIndex(anchorIndex, { align: "start" });
     }
-  };
+  }, [renderScale, basePage, virtualizer]);
+
+  const pendingScrollRef = useRef<{ index: number; tries: number } | null>(null);
+
+  const scrollToPage = useCallback(
+    (page: number) => {
+      const index = page - 1;
+      if (index < 0 || index >= numPages) return;
+      pendingScrollRef.current = { index, tries: 0 };
+      virtualizer.scrollToIndex(index, { align: "start" });
+    },
+    [numPages, virtualizer],
+  );
+
+  // The first scrollToIndex aims at an estimated offset; once the target page
+  // mounts and reports its real height the offset moves, so re-issue until it
+  // settles. Intentionally has no dependency array — this is the only point
+  // where freshly measured heights are observable.
+  useEffect(() => {
+    const pending = pendingScrollRef.current;
+    if (!pending) return;
+    if (pending.tries >= 5) {
+      pendingScrollRef.current = null;
+      return;
+    }
+    const offset = virtualizer.getOffsetForIndex(pending.index, "start")?.[0];
+    if (offset == null) return;
+    if (Math.abs((virtualizer.scrollOffset ?? 0) - offset) <= 2) {
+      pendingScrollRef.current = null;
+      return;
+    }
+    pending.tries += 1;
+    virtualizer.scrollToIndex(pending.index, { align: "start" });
+  });
 
   // Reset state when dialog opens/closes
   useEffect(() => {
@@ -352,6 +563,8 @@ export function PdfQuizViewer({
       setShowHeatmap(false);
       setHeatmapBlocks([]);
       setHeatmapMaxCount(0);
+      setBasePage(null);
+      pendingScrollRef.current = null;
     }
   }, [open]);
 
@@ -384,7 +597,7 @@ export function PdfQuizViewer({
   }, [heatmapBlocks]);
 
   // Compute which pages are currently highlighted (and which color)
-  const highlightMap = useCallback((): Map<number, string> => {
+  const highlights = useMemo<Map<number, string>>(() => {
     const map = new Map<number, string>();
     if (activeQuestionIdx === null) return map;
     const q = questions[activeQuestionIdx];
@@ -406,8 +619,6 @@ export function PdfQuizViewer({
       scrollToPage(firstPage);
     }
   };
-
-  const highlights = highlightMap();
 
   // Build keyword renderer for the active question
   const activeKeywords = useMemo(
@@ -647,7 +858,13 @@ export function PdfQuizViewer({
           </div>
 
           {/* ── Right: PDF viewer ───────────────────────────────── */}
-          <div className="flex flex-1 flex-col min-w-0 min-h-0 overflow-hidden bg-muted/30">
+          <div className="relative flex flex-1 flex-col min-w-0 min-h-0 overflow-hidden bg-muted/30">
+            {heatmapLoading && (
+              <div className="absolute top-2 left-1/2 z-30 -translate-x-1/2 flex items-center gap-1 rounded-full bg-background/80 px-2 py-0.5 text-[10px] text-muted-foreground shadow">
+                <Loader2 className="size-3 animate-spin" />
+                {t("pdfViewer.loadingHeatmap")}
+              </div>
+            )}
             {pdfError ? (
               <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
                 <BookOpen className="size-12 opacity-30" />
@@ -657,159 +874,78 @@ export function PdfQuizViewer({
                 <p className="text-xs">{pdfError}</p>
               </div>
             ) : (
-              <div className="flex-1 min-h-0 overflow-y-auto">
-                <div className="flex flex-col items-center gap-4 py-4 px-2">
-                  <Document
-                    file={pdfUrl}
-                    onLoadSuccess={({ numPages: n }) => {
-                      setNumPages(n);
-                      pageRefs.current = new Array(n).fill(null);
+              <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
+                <Document
+                  file={pdfUrl}
+                  className="px-2 pb-4"
+                  onLoadSuccess={(pdf) => {
+                    setNumPages(pdf.numPages);
+                    pdf
+                      .getPage(1)
+                      .then((page) => {
+                        const vp = page.getViewport({ scale: 1 });
+                        setBasePage({ width: vp.width, height: vp.height });
+                      })
+                      .catch(() => {});
+                  }}
+                  onLoadError={(err) =>
+                    setPdfError(err.message || t("pdfViewer.unknownError"))
+                  }
+                  loading={
+                    <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
+                      <Loader2 className="size-8 animate-spin" />
+                      <p className="text-sm">{t("pdfViewer.loadingPdf")}</p>
+                    </div>
+                  }
+                >
+                  <div
+                    style={{
+                      height: virtualizer.getTotalSize(),
+                      width: "100%",
+                      position: "relative",
                     }}
-                    onLoadError={(err) =>
-                      setPdfError(err.message || t("pdfViewer.unknownError"))
-                    }
-                    loading={
-                      <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
-                        <Loader2 className="size-8 animate-spin" />
-                        <p className="text-sm">{t("pdfViewer.loadingPdf")}</p>
-                      </div>
-                    }
                   >
-                    {Array.from({ length: numPages }, (_, i) => {
-                      const pageNum = i + 1;
-                      const highlightColor = highlights.get(pageNum);
-                      const isHighlighted = !!highlightColor;
+                    {virtualizer.getVirtualItems().map((vItem) => {
+                      const pageNum = vItem.index + 1;
                       const heatCount = pageDistribution.get(pageNum) ?? 0;
-                      const heatIntensity = heatCount / maxPageCount;
                       return (
                         <div
-                          key={pageNum}
-                          ref={(el) => {
-                            pageRefs.current[i] = el;
-                          }}
-                          className="relative mb-1 shadow-sm"
+                          key={vItem.key}
+                          data-index={vItem.index}
+                          ref={virtualizer.measureElement}
+                          className="absolute left-0 top-0 flex w-full justify-center"
+                          style={{ transform: `translateY(${vItem.start}px)` }}
                         >
-                          {/* Page number label */}
-                          <div className="absolute -top-5 left-0 z-20 text-[10px] text-muted-foreground select-none">
-                            {t("pdfViewer.page")} {pageNum}
-                          </div>
-
-                          <Page
+                          <PdfPageItem
                             pageNumber={pageNum}
-                            scale={scale}
-                            renderTextLayer
-                            renderAnnotationLayer={false}
-                            customTextRenderer={
+                            scale={renderScale}
+                            placeholderWidth={
+                              (basePage?.width ?? FALLBACK_PAGE_WIDTH) *
+                              renderScale
+                            }
+                            placeholderHeight={estimatedPageHeight}
+                            textRenderer={
                               showHeatmap
                                 ? heatmapRenderer
                                 : showAllKeywords
                                   ? allKeywordsRenderer
-                                  : isHighlighted
+                                  : highlights.has(pageNum)
                                     ? keywordRenderer
                                     : undefined
                             }
+                            showHeatmap={showHeatmap}
+                            heatBlocks={
+                              heatBlocksByPage.get(pageNum) ?? EMPTY_BLOCKS
+                            }
+                            heatmapMaxCount={heatmapMaxCount}
+                            heatCount={heatCount}
+                            heatIntensity={heatCount / maxPageCount}
                           />
-
-                          {/* Heatmap overlay — block-level bounding boxes */}
-                          {showHeatmap &&
-                            (() => {
-                              const pageBlocks =
-                                heatBlocksByPage.get(pageNum) ?? [];
-                              const hasBlocks = pageBlocks.length > 0;
-                              return (
-                                <div className="absolute inset-0 z-10 pointer-events-none">
-                                  {/* Loading indicator */}
-                                  {heatmapLoading && (
-                                    <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1 rounded-full bg-background/80 px-2 py-0.5 text-[10px] text-muted-foreground shadow">
-                                      <Loader2 className="size-3 animate-spin" />
-                                      Loading heatmap...
-                                    </div>
-                                  )}
-                                  {/* Block-level bbox overlays */}
-                                  {hasBlocks &&
-                                    pageBlocks.map((block, bIdx) => {
-                                      const [x0, y0, x1, y1] = block.bbox;
-                                      const { pageWidth, pageHeight } = block;
-                                      const intensity =
-                                        heatmapMaxCount > 0
-                                          ? block.count / heatmapMaxCount
-                                          : 0;
-                                      // Convert PDF coordinates to percentages
-                                      const left = (x0 / pageWidth) * 100;
-                                      const top = (y0 / pageHeight) * 100;
-                                      const width =
-                                        ((x1 - x0) / pageWidth) * 100;
-                                      const height =
-                                        ((y1 - y0) / pageHeight) * 100;
-                                      return (
-                                        <div
-                                          key={bIdx}
-                                          className="absolute rounded-sm transition-opacity duration-300 pointer-events-auto"
-                                          title={`${block.count} keyword${block.count > 1 ? "s" : ""}: ${block.keywords.slice(0, 3).join(", ")}`}
-                                          style={{
-                                            left: `${left}%`,
-                                            top: `${top}%`,
-                                            width: `${width}%`,
-                                            height: `${height}%`,
-                                            background: thermalColorPdfAlpha(
-                                              intensity,
-                                              0.15 + intensity * 0.25,
-                                            ),
-                                            borderLeft: `3px solid ${thermalColorPdf(intensity)}`,
-                                            boxShadow:
-                                              intensity > 0.5
-                                                ? `0 0 8px ${thermalColorPdfAlpha(intensity, 0.3)}`
-                                                : "none",
-                                          }}
-                                        />
-                                      );
-                                    })}
-                                  {/* Fallback: page-level radial gradient if no blocks loaded yet */}
-                                  {!hasBlocks && heatCount > 0 && (
-                                    <div
-                                      className="absolute inset-0"
-                                      style={{
-                                        background: `radial-gradient(ellipse 130% 110% at 50% 45%, ${thermalColorPdfAlpha(heatIntensity, 0.18 + heatIntensity * 0.18)} 0%, ${thermalColorPdfAlpha(heatIntensity, 0.06 + heatIntensity * 0.08)} 60%, transparent 92%)`,
-                                      }}
-                                    />
-                                  )}
-                                  {/* Heat badge on page */}
-                                  {heatCount > 0 && (
-                                    <div
-                                      className="absolute top-2 right-2 flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold text-white shadow-md pointer-events-auto z-20"
-                                      style={{
-                                        background:
-                                          thermalColorPdf(heatIntensity),
-                                      }}
-                                    >
-                                      <Flame className="size-3" />
-                                      {heatCount} {t("pdfViewer.questions")}
-                                      {hasBlocks && (
-                                        <span className="text-[9px] opacity-80 ml-0.5">
-                                          · {pageBlocks.length}{" "}
-                                          {t("pdfViewer.zones")}
-                                        </span>
-                                      )}
-                                    </div>
-                                  )}
-                                  {/* Side heat bar */}
-                                  {heatCount > 0 && (
-                                    <div
-                                      className="absolute left-0 top-0 bottom-0 w-1.5 rounded-l"
-                                      style={{
-                                        background:
-                                          thermalColorPdf(heatIntensity),
-                                      }}
-                                    />
-                                  )}
-                                </div>
-                              );
-                            })()}
                         </div>
                       );
                     })}
-                  </Document>
-                </div>
+                  </div>
+                </Document>
               </div>
             )}
           </div>
