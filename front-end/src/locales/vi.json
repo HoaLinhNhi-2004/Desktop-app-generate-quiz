@@ -16,7 +16,8 @@
   "theme": {
     "light": "Sáng",
     "dark": "Tối",
-    "system": "Hệ thống"
+    "system": "Hệ thống",
+    "toggle": "Đổi giao diện sáng / tối"
   },
   "header": {
     "settingsTitle": "Cài đặt API Keys",
@@ -53,7 +54,8 @@
       "description": "Tạo thư mục đầu tiên để bắt đầu tổ chức Quiz của bạn."
     },
     "emptyFavorites": "Chưa có thư mục yêu thích nào.",
-    "emptyRecent": "Chưa có thư mục nào được mở gần đây."
+    "emptyRecent": "Chưa có thư mục nào được mở gần đây.",
+    "importFolder": "Nhập thư mục"
   },
   "folder": {
     "title": "Thư mục",
@@ -126,7 +128,9 @@
     "description": "Các quiz đã tạo trong thư mục này",
     "empty": "Chưa có quiz nào được tạo",
     "viewSource": "Xem nguồn",
-    "start": "Bắt đầu"
+    "start": "Bắt đầu",
+    "edit": "Sửa",
+    "loadFailed": "Không tải được danh sách bộ quiz."
   },
   "quiz": {
     "back": "Quay lại",
@@ -352,7 +356,11 @@
       "ocr": "OCR trang {{current}}/{{total}}",
       "chunking": "Đang chia đoạn",
       "embedding": "Đang vector hoá"
-    }
+    },
+    "ready": "Sẵn sàng",
+    "loadFailed": "Không tải được danh sách tài liệu.",
+    "unsupportedFile": "Định dạng file không được hỗ trợ",
+    "unsupportedFileDesc": "Đã bỏ qua: {{names}}"
   },
   "materialSelect": {
     "title": "Chọn 1 tài liệu",
@@ -393,7 +401,9 @@
     "defaultTitle": "Bài Kiểm Tra",
     "questionPrefix": "Câu {{n}}: ",
     "answerKey": "ĐÁP ÁN",
-    "explanation": "Giải thích: "
+    "explanation": "Giải thích: ",
+    "success": "Đã xuất file",
+    "failed": "Xuất file thất bại"
   },
   "pdfViewer": {
     "pageLabel": "Trang:",
@@ -435,7 +445,8 @@
     "section": "Phần",
     "sections": "phần",
     "chars": "ký tự",
-    "noContent": "Không có văn bản nguồn"
+    "noContent": "Không có văn bản nguồn",
+    "loadFailed": "Không tải được nội dung tài liệu."
   },
   "youtubeViewer": {
     "title": "Nguồn YouTube",
@@ -466,7 +477,14 @@
   },
   "interactiveFolder": {
     "paper1": "Bài tập",
-    "paper2": "Ôn tập"
+    "paper2": "Ôn tập",
+    "quizSet": "Bộ quiz",
+    "processing": "Đang xử lý {{count}}...",
+    "processingFiles": "Đang xử lý {{count}} file...",
+    "empty": "Trống",
+    "documents": "{{count}} tài liệu",
+    "docs": "{{count}} tài liệu",
+    "clickToStart": "Nhấn để bắt đầu..."
   },
   "settings": {
     "timeAgo": {
@@ -733,7 +751,9 @@
       "refreshNeedsKey": "Thêm key cho provider này trước",
       "refreshSuccess": "Đã tải {{count}} model",
       "refreshFailed": "Không tải được danh sách model"
-    }
+    },
+    "saveSettingsFailed": "Không lưu được cài đặt",
+    "settingsSaved": "Đã lưu cài đặt"
   },
   "folderStats": {
     "loading": "Đang tải thống kê...",
@@ -906,7 +926,12 @@
       "completed": "Nhập thư mục hoàn tất",
       "completedDesc": "Đã nhập {{imported}} file vào {{folders}} thư mục.",
       "failed": "Nhập thư mục thất bại",
-      "cancelled": "Đã huỷ nhập thư mục"
+      "cancelled": "Đã huỷ nhập thư mục",
+      "pauseFailed": "Không tạm dừng được import",
+      "resumeFailed": "Không tiếp tục được import",
+      "cancelFailed": "Không hủy được import",
+      "disconnected": "Mất kết nối tới backend",
+      "disconnectedDesc": "Không lấy được tiến trình import. Backend có thể đã dừng — bạn có thể đóng bảng này."
     }
   },
   "a11y": {
@@ -942,6 +967,26 @@
     },
     "shortcuts": {
       "readQuestion": "Đọc câu hỏi"
+    },
+    "labels": {
+      "openFolder": "Mở thư mục {{name}}",
+      "addFavorite": "Thêm {{name}} vào yêu thích",
+      "removeFavorite": "Bỏ {{name}} khỏi yêu thích",
+      "editFolder": "Sửa thư mục {{name}}",
+      "deleteFolder": "Xóa thư mục {{name}}",
+      "gridView": "Xem dạng lưới",
+      "listView": "Xem dạng danh sách",
+      "pickColor": "Chọn màu {{color}}",
+      "changeLanguage": "Đổi ngôn ngữ",
+      "closeViewer": "Đóng trình xem",
+      "minimize": "Thu nhỏ",
+      "dismiss": "Đóng",
+      "removeFile": "Bỏ file {{name}}",
+      "deleteMaterial": "Xóa tài liệu {{name}}",
+      "deleteQuizSet": "Xóa bộ quiz {{name}}",
+      "deleteApiKey": "Xóa API key",
+      "reprocessMaterial": "Xử lý lại tài liệu {{name}}",
+      "textContent": "Nội dung văn bản"
     }
   },
   "updates": {
@@ -970,5 +1015,97 @@
       "no-release": "Chưa có bản phát hành nào cho ứng dụng này.",
       "unexpected": "Kiểm tra cập nhật thất bại."
     }
+  },
+  "confirm": {
+    "deleteFolder": {
+      "title": "Xóa thư mục \"{{name}}\"?",
+      "desc": "Thao tác này sẽ xóa vĩnh viễn thư mục và toàn bộ tài liệu bên trong. Bạn không thể hoàn tác."
+    },
+    "deleteQuizSet": {
+      "title": "Xóa bộ quiz \"{{name}}\"?",
+      "desc": "Toàn bộ câu hỏi và lịch sử làm bài của bộ quiz này sẽ bị xóa vĩnh viễn."
+    },
+    "deleteMaterial": {
+      "title": "Xóa tài liệu \"{{name}}\"?",
+      "desc": "File và nội dung đã trích xuất sẽ bị xóa vĩnh viễn. Các bộ quiz đã tạo từ tài liệu này vẫn được giữ lại."
+    },
+    "deleteApiKey": {
+      "title": "Xóa API key này?",
+      "desc": "Key sẽ bị xóa vĩnh viễn và không thể xem lại. Bạn sẽ phải nhập lại key mới từ nhà cung cấp nếu muốn dùng tiếp."
+    },
+    "removeCredentials": {
+      "title": "Xóa cấu hình OAuth của {{provider}}?",
+      "desc": "Client ID và secret đã lưu sẽ bị xóa, đồng thời ngắt tài khoản đang kết nối. Bạn sẽ phải đăng ký lại OAuth app để dùng nguồn này."
+    },
+    "disconnect": {
+      "title": "Ngắt kết nối {{provider}}?",
+      "desc": "Tài khoản đang đăng nhập sẽ bị ngắt. Cấu hình OAuth app vẫn được giữ nên bạn có thể kết nối lại bất cứ lúc nào."
+    },
+    "deleteQuestion": {
+      "title": "Xóa câu {{n}}?",
+      "desc": "Nội dung câu hỏi, các đáp án và giải thích sẽ bị xóa. Không thể hoàn tác."
+    },
+    "deleteOption": {
+      "title": "Xóa đáp án này?",
+      "desc": "Nếu đây đang là đáp án đúng, hệ thống sẽ tự chọn lại đáp án đúng cho câu hỏi."
+    },
+    "cancelImport": {
+      "title": "Hủy quá trình import?",
+      "desc": "Các file chưa xử lý sẽ bị bỏ qua. Những thư mục và tài liệu đã import xong vẫn được giữ lại."
+    },
+    "discardEdits": {
+      "title": "Bỏ các thay đổi chưa lưu?",
+      "desc": "Bạn đã chỉnh sửa bộ quiz này nhưng chưa lưu. Rời khỏi trang sẽ mất toàn bộ thay đổi.",
+      "action": "Rời đi"
+    },
+    "leaveQuiz": {
+      "title": "Thoát khỏi bài làm?",
+      "desc": "Bạn đã trả lời {{count}} câu nhưng chưa nộp bài. Thoát bây giờ sẽ không lưu kết quả.",
+      "action": "Thoát"
+    },
+    "cancelGeneration": {
+      "title": "Hủy tạo câu hỏi?",
+      "desc": "Quá trình tạo quiz sẽ dừng lại và không có câu hỏi nào được lưu.",
+      "action": "Hủy tạo"
+    }
+  },
+  "editQuiz": {
+    "title": "Chỉnh sửa quiz",
+    "loadFailed": "Không tải được bộ quiz.",
+    "saveChanges": "Lưu thay đổi",
+    "saveSuccess": "Đã cập nhật quiz",
+    "saveFailed": "Không cập nhật được quiz",
+    "detailsTitle": "Thông tin quiz",
+    "titleLabel": "Tiêu đề",
+    "titlePlaceholder": "Tiêu đề quiz",
+    "questionsHeading": "Câu hỏi ({{count}})",
+    "addQuestion": "Thêm câu hỏi",
+    "questionTypePlaceholder": "Loại câu hỏi",
+    "deleteQuestion": "Xóa câu hỏi",
+    "questionTextLabel": "Nội dung câu hỏi",
+    "optionsLabel": "Đáp án & đáp án đúng",
+    "addOption": "Thêm đáp án",
+    "trueFalseWarning": "Câu Đúng/Sai phải có đúng 2 đáp án.",
+    "optionPlaceholder": "Nội dung đáp án...",
+    "deleteOption": "Xóa đáp án",
+    "markCorrect": "Đánh dấu là đáp án đúng",
+    "explanationLabel": "Giải thích (tùy chọn)",
+    "explanationPlaceholder": "Giải thích vì sao đáp án này đúng...",
+    "noQuestions": "Chưa có câu hỏi nào."
+  },
+  "smartImportQuiz": {
+    "modeGenerate": "Tạo từ tài liệu",
+    "modeImport": "Trích xuất đề thi",
+    "importHint": "AI sẽ tự động nhận diện và trích xuất nguyên bộ câu hỏi từ file đề thi. Số lượng, loại câu hỏi và độ khó sẽ được xác định tự động.",
+    "importReadyTitle": "Tài liệu đề thi",
+    "importReadyDesc": "Chọn file chứa đề thi bên trái, AI sẽ tự động trích xuất tất cả câu hỏi và đáp án.",
+    "importing": "Đang trích xuất...",
+    "importBtn": "Trích xuất câu hỏi"
+  },
+  "spreadsheetViewer": {
+    "title": "Bảng tính nguồn",
+    "questionsHeading": "{{count}} câu hỏi có thể đã được tạo",
+    "noData": "Không có dữ liệu hợp lệ trong file này.",
+    "loadFailed": "Không đọc được file bảng tính."
   }
 }

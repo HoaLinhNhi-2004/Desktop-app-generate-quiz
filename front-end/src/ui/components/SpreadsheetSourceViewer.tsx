@@ -149,7 +149,9 @@ function QuestionRow({
             })}
             {question.explanation && (
               <div className="mt-3 text-xs text-muted-foreground bg-muted p-2 rounded-md">
-                <span className="font-semibold text-foreground">Giải thích:</span>{" "}
+                <span className="font-semibold text-foreground">
+                  {t("quizQuestion.explanationLabel")}
+                </span>{" "}
                 {question.explanation}
               </div>
             )}
@@ -179,6 +181,7 @@ export function SpreadsheetSourceViewer({
   excelUrl,
   fileName,
 }: SpreadsheetSourceViewerProps) {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [activeQIdx, setActiveQIdx] = useState<number | null>(null);
 
@@ -187,11 +190,13 @@ export function SpreadsheetSourceViewer({
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [activeSheet, setActiveSheet] = useState<string>("");
   const [sheetData, setSheetData] = useState<unknown[][]>([]);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     if (!open || !excelUrl) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
+    setLoadError(false);
     fetch(excelUrl)
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch spreadsheet");
@@ -208,8 +213,9 @@ export function SpreadsheetSourceViewer({
           setSheetData(data as unknown[][]);
         }
       })
-      .catch((err) => {
-        console.error("Error reading excel file:", err);
+      .catch(() => {
+        // A fetch/parse failure must not read as "this file happens to be empty".
+        setLoadError(true);
       })
       .finally(() => {
         setLoading(false);
@@ -252,7 +258,7 @@ export function SpreadsheetSourceViewer({
           <div className="flex items-center gap-2 min-w-0">
             <FileSpreadsheet className="size-4 shrink-0 text-amber-500" />
             <DialogTitle className="truncate text-sm font-semibold">
-              {quizTitle || fileName || "Spreadsheet View"}
+              {quizTitle || fileName || t("spreadsheetViewer.title")}
             </DialogTitle>
             <Badge variant="secondary" className="text-[10px] shrink-0">
               Excel / CSV
@@ -263,6 +269,8 @@ export function SpreadsheetSourceViewer({
             variant="ghost"
             className="size-7 shrink-0"
             onClick={onClose}
+            title={t("common.close")}
+            aria-label={t("a11y.labels.closeViewer")}
           >
             <X className="size-4" />
           </Button>
@@ -274,7 +282,9 @@ export function SpreadsheetSourceViewer({
           <div className="w-[38%] shrink-0 border-r flex flex-col min-h-0">
             <div className="shrink-0 px-4 py-2 border-b">
               <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                {questions.length} CH CÓ THỂ ĐÃ ĐƯỢC TẠO
+                {t("spreadsheetViewer.questionsHeading", {
+                  count: questions.length,
+                })}
               </h3>
             </div>
             <ScrollArea className="flex-1 h-0">
@@ -298,10 +308,15 @@ export function SpreadsheetSourceViewer({
               <div className="flex-1 flex items-center justify-center">
                 <Loader2 className="size-8 animate-spin text-muted-foreground" />
               </div>
+            ) : loadError ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-sm text-destructive">
+                <TableProperties className="size-10 mb-2 opacity-50" />
+                <p>{t("spreadsheetViewer.loadFailed")}</p>
+              </div>
             ) : sheetData.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center text-sm text-muted-foreground">
                 <TableProperties className="size-10 mb-2 opacity-50" />
-                <p>Không có dữ liệu hợp lệ trong file này.</p>
+                <p>{t("spreadsheetViewer.noData")}</p>
               </div>
             ) : (
               <>

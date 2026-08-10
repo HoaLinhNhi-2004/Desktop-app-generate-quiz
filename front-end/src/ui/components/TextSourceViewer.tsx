@@ -143,7 +143,9 @@ function QuestionRow({
             })}
             {question.explanation && (
               <div className="mt-3 text-xs text-muted-foreground bg-muted p-2 rounded-md">
-                <span className="font-semibold text-foreground">Giải thích:</span>{" "}
+                <span className="font-semibold text-foreground">
+                  {t("quizQuestion.explanationLabel")}
+                </span>{" "}
                 {question.explanation}
               </div>
             )}
@@ -202,6 +204,7 @@ export function TextSourceViewer({
   const { t } = useTranslation();
   const [pages, setPages] = useState<SourceTextPage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [activeQIdx, setActiveQIdx] = useState<number | null>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const contentRef = useRef<HTMLDivElement>(null);
@@ -210,9 +213,14 @@ export function TextSourceViewer({
     if (!open || !quizSetId) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
+    setLoadError(false);
     getQuizSetSourceTextApi(quizSetId)
       .then((res) => setPages(res.pages))
-      .catch(() => setPages([]))
+      .catch(() => {
+        // Without this the user cannot tell a failed fetch from an empty doc.
+        setPages([]);
+        setLoadError(true);
+      })
       .finally(() => setLoading(false));
   }, [open, quizSetId]);
 
@@ -270,6 +278,8 @@ export function TextSourceViewer({
             variant="ghost"
             className="size-7 shrink-0"
             onClick={onClose}
+            title={t("common.close")}
+            aria-label={t("a11y.labels.closeViewer")}
           >
             <X className="size-4" />
           </Button>
@@ -304,6 +314,10 @@ export function TextSourceViewer({
             {loading ? (
               <div className="flex-1 flex items-center justify-center">
                 <Loader2 className="size-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : loadError ? (
+              <div className="flex-1 flex items-center justify-center text-sm text-destructive">
+                {t("textViewer.loadFailed")}
               </div>
             ) : pages.length === 0 ? (
               <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">

@@ -30,6 +30,7 @@ export function useFolders() {
   const loadFolders = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
       const data = await getFoldersApi();
       setFolders(data);
     } catch (err) {

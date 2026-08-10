@@ -16,7 +16,8 @@
   "theme": {
     "light": "Light",
     "dark": "Dark",
-    "system": "System"
+    "system": "System",
+    "toggle": "Toggle light / dark theme"
   },
   "header": {
     "settingsTitle": "API Keys Settings",
@@ -53,7 +54,8 @@
       "description": "Create your first folder to start organizing your Quizzes."
     },
     "emptyFavorites": "No favorite folders yet.",
-    "emptyRecent": "No recently opened folders."
+    "emptyRecent": "No recently opened folders.",
+    "importFolder": "Import Folder"
   },
   "folder": {
     "title": "Folder",
@@ -126,7 +128,9 @@
     "description": "Quizzes created in this folder",
     "empty": "No quizzes created yet",
     "viewSource": "View source",
-    "start": "Start"
+    "start": "Start",
+    "edit": "Edit",
+    "loadFailed": "Failed to load quiz sets."
   },
   "quiz": {
     "back": "Back",
@@ -352,7 +356,11 @@
       "ocr": "OCR page {{current}}/{{total}}",
       "chunking": "Chunking",
       "embedding": "Embedding"
-    }
+    },
+    "ready": "Ready",
+    "loadFailed": "Failed to load materials.",
+    "unsupportedFile": "Unsupported file type",
+    "unsupportedFileDesc": "Skipped: {{names}}"
   },
   "materialSelect": {
     "title": "Select 1 material",
@@ -393,7 +401,9 @@
     "defaultTitle": "Quiz",
     "questionPrefix": "Question {{n}}: ",
     "answerKey": "ANSWER KEY",
-    "explanation": "Explanation: "
+    "explanation": "Explanation: ",
+    "success": "File exported",
+    "failed": "Export failed"
   },
   "pdfViewer": {
     "pageLabel": "Page:",
@@ -435,7 +445,8 @@
     "section": "Section",
     "sections": "sections",
     "chars": "chars",
-    "noContent": "No source text available"
+    "noContent": "No source text available",
+    "loadFailed": "Failed to load the document content."
   },
   "youtubeViewer": {
     "title": "YouTube Source",
@@ -466,7 +477,14 @@
   },
   "interactiveFolder": {
     "paper1": "Exercise",
-    "paper2": "Review"
+    "paper2": "Review",
+    "quizSet": "Quiz Set",
+    "processing": "Processing {{count}}...",
+    "processingFiles": "Processing {{count}} file(s)...",
+    "empty": "Empty",
+    "documents": "{{count}} Documents",
+    "docs": "{{count}} docs",
+    "clickToStart": "Click to start..."
   },
   "settings": {
     "timeAgo": {
@@ -733,7 +751,9 @@
       "refreshNeedsKey": "Add a key for this provider first",
       "refreshSuccess": "Fetched {{count}} models",
       "refreshFailed": "Could not refresh the model list"
-    }
+    },
+    "saveSettingsFailed": "Failed to save settings",
+    "settingsSaved": "Settings saved"
   },
   "folderStats": {
     "loading": "Loading statistics...",
@@ -906,7 +926,12 @@
       "completed": "Folder import complete",
       "completedDesc": "Imported {{imported}} files into {{folders}} folders.",
       "failed": "Folder import failed",
-      "cancelled": "Folder import cancelled"
+      "cancelled": "Folder import cancelled",
+      "pauseFailed": "Could not pause the import",
+      "resumeFailed": "Could not resume the import",
+      "cancelFailed": "Could not cancel the import",
+      "disconnected": "Lost connection to the backend",
+      "disconnectedDesc": "Import progress could not be fetched. The backend may have stopped — you can dismiss this panel."
     }
   },
   "a11y": {
@@ -942,6 +967,26 @@
     },
     "shortcuts": {
       "readQuestion": "Read question"
+    },
+    "labels": {
+      "openFolder": "Open folder {{name}}",
+      "addFavorite": "Add {{name}} to favorites",
+      "removeFavorite": "Remove {{name}} from favorites",
+      "editFolder": "Edit folder {{name}}",
+      "deleteFolder": "Delete folder {{name}}",
+      "gridView": "Grid view",
+      "listView": "List view",
+      "pickColor": "Pick colour {{color}}",
+      "changeLanguage": "Change language",
+      "closeViewer": "Close viewer",
+      "minimize": "Minimize",
+      "dismiss": "Dismiss",
+      "removeFile": "Remove file {{name}}",
+      "deleteMaterial": "Delete material {{name}}",
+      "deleteQuizSet": "Delete quiz set {{name}}",
+      "deleteApiKey": "Delete API key",
+      "reprocessMaterial": "Reprocess material {{name}}",
+      "textContent": "Text content"
     }
   },
   "updates": {
@@ -970,5 +1015,97 @@
       "no-release": "No published release was found for this app.",
       "unexpected": "Update check failed."
     }
+  },
+  "confirm": {
+    "deleteFolder": {
+      "title": "Delete folder \"{{name}}\"?",
+      "desc": "This permanently deletes the folder and every document inside it. This cannot be undone."
+    },
+    "deleteQuizSet": {
+      "title": "Delete quiz set \"{{name}}\"?",
+      "desc": "All questions and the attempt history for this quiz set will be permanently deleted."
+    },
+    "deleteMaterial": {
+      "title": "Delete material \"{{name}}\"?",
+      "desc": "The file and its extracted content will be permanently deleted. Quiz sets already generated from it are kept."
+    },
+    "deleteApiKey": {
+      "title": "Delete this API key?",
+      "desc": "The key is deleted permanently and cannot be viewed again. You will need a new key from the provider to continue."
+    },
+    "removeCredentials": {
+      "title": "Remove {{provider}} OAuth configuration?",
+      "desc": "The saved client ID and secret will be deleted and the connected account disconnected. You will have to register the OAuth app again to use this source."
+    },
+    "disconnect": {
+      "title": "Disconnect {{provider}}?",
+      "desc": "The signed-in account will be disconnected. Your OAuth app configuration is kept, so you can reconnect at any time."
+    },
+    "deleteQuestion": {
+      "title": "Delete question {{n}}?",
+      "desc": "The question text, its options and explanation will be removed. This cannot be undone."
+    },
+    "deleteOption": {
+      "title": "Delete this option?",
+      "desc": "If this is currently the correct answer, a new correct answer will be selected automatically."
+    },
+    "cancelImport": {
+      "title": "Cancel the import?",
+      "desc": "Files that have not been processed yet will be skipped. Folders and materials already imported are kept."
+    },
+    "discardEdits": {
+      "title": "Discard unsaved changes?",
+      "desc": "You have edited this quiz set but have not saved. Leaving the page discards every change.",
+      "action": "Leave"
+    },
+    "leaveQuiz": {
+      "title": "Leave this quiz?",
+      "desc": "You have answered {{count}} question(s) but have not submitted. Leaving now discards your results.",
+      "action": "Leave"
+    },
+    "cancelGeneration": {
+      "title": "Cancel question generation?",
+      "desc": "Generation stops immediately and no questions will be saved.",
+      "action": "Cancel generation"
+    }
+  },
+  "editQuiz": {
+    "title": "Edit Quiz",
+    "loadFailed": "Failed to load quiz set.",
+    "saveChanges": "Save Changes",
+    "saveSuccess": "Quiz updated successfully",
+    "saveFailed": "Failed to update quiz",
+    "detailsTitle": "Quiz Details",
+    "titleLabel": "Title",
+    "titlePlaceholder": "Quiz title",
+    "questionsHeading": "Questions ({{count}})",
+    "addQuestion": "Add Question",
+    "questionTypePlaceholder": "Question Type",
+    "deleteQuestion": "Delete question",
+    "questionTextLabel": "Question Text",
+    "optionsLabel": "Options & Correct Answer",
+    "addOption": "Add Option",
+    "trueFalseWarning": "True/False must have exactly 2 options.",
+    "optionPlaceholder": "Option text...",
+    "deleteOption": "Delete option",
+    "markCorrect": "Mark as the correct answer",
+    "explanationLabel": "Explanation (Optional)",
+    "explanationPlaceholder": "Explain why the answer is correct...",
+    "noQuestions": "No questions yet."
+  },
+  "smartImportQuiz": {
+    "modeGenerate": "Generate from materials",
+    "modeImport": "Extract existing exam",
+    "importHint": "The AI detects and extracts the full question set straight from an exam file. Question count, type and difficulty are determined automatically.",
+    "importReadyTitle": "Q&A Document",
+    "importReadyDesc": "Pick an exam file on the left and the AI will extract every question and answer from it.",
+    "importing": "Extracting...",
+    "importBtn": "Extract questions"
+  },
+  "spreadsheetViewer": {
+    "title": "Source Spreadsheet",
+    "questionsHeading": "{{count}} questions possibly generated",
+    "noData": "No usable data in this file.",
+    "loadFailed": "Could not read the spreadsheet file."
   }
 }

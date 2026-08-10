@@ -21,11 +21,13 @@ import {
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import type { ImportJob, ImportFileStatus } from "@/features/smart-import";
 
 interface SmartImportWidgetProps {
   job: ImportJob | null;
   isMinimized: boolean;
+  isDisconnected?: boolean;
   onMinimize: () => void;
   onExpand: () => void;
   onDismiss: () => void;
@@ -85,6 +87,7 @@ function StatusLabel({ status }: { status: ImportFileStatus }) {
 export function SmartImportWidget({
   job,
   isMinimized,
+  isDisconnected = false,
   onMinimize,
   onExpand,
   onDismiss,
@@ -94,9 +97,12 @@ export function SmartImportWidget({
 }: SmartImportWidgetProps) {
   const { t } = useTranslation();
 
-  const isRunning = job
-    ? !["completed", "error", "cancelled"].includes(job.status)
-    : false;
+  // A job whose polling gave up is not running any more as far as this widget
+  // is concerned — otherwise the dismiss button stays hidden forever.
+  const isRunning =
+    job && !isDisconnected
+      ? !["completed", "error", "cancelled"].includes(job.status)
+      : false;
 
   // Optimistic flag: user just clicked Cancel, backend hasn't flipped status yet.
   const isCancelling = !!job && job.cancelRequested && job.status !== "cancelled";
@@ -112,6 +118,7 @@ export function SmartImportWidget({
 
   const statusText = useMemo(() => {
     if (!job) return "";
+    if (isDisconnected) return t("notifications.smartImport.disconnected");
     if (isCancelling) return t("smartImport.cancelling", "Đang huỷ...");
     if (job.paused) return t("smartImport.paused", "Tạm dừng");
     if (job.rateLimitInfo) return job.rateLimitInfo;
@@ -131,7 +138,7 @@ export function SmartImportWidget({
       default:
         return "";
     }
-  }, [job, isCancelling, t]);
+  }, [job, isCancelling, isDisconnected, t]);
 
   if (!job) return null;
 
@@ -228,19 +235,30 @@ export function SmartImportWidget({
             )}
             {/* Cancel button — disabled (kept visible) while cancellation is in flight */}
             {isRunning && onCancel && (
-              <button
-                onClick={onCancel}
-                disabled={isCancelling}
-                className="size-7 flex items-center justify-center rounded-lg hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                title={t("smartImport.cancelAction", "Huỷ")}
+              <ConfirmDialog
+                destructive
+                title={t("confirm.cancelImport.title")}
+                description={t("confirm.cancelImport.desc")}
+                confirmLabel={t("smartImport.cancelAction")}
+                pending={isCancelling}
+                onConfirm={onCancel}
               >
-                <Square className="size-3 text-red-400" />
-              </button>
+                <button
+                  disabled={isCancelling}
+                  className="size-7 flex items-center justify-center rounded-lg hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={t("smartImport.cancelAction")}
+                  aria-label={t("smartImport.cancelAction")}
+                >
+                  <Square className="size-3 text-red-400" />
+                </button>
+              </ConfirmDialog>
             )}
             {/* Minimize button */}
             <button
               onClick={onMinimize}
               className="size-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors"
+              title={t("a11y.labels.minimize")}
+              aria-label={t("a11y.labels.minimize")}
             >
               <Minus className="size-3.5 text-muted-foreground" />
             </button>
@@ -249,6 +267,8 @@ export function SmartImportWidget({
               <button
                 onClick={onDismiss}
                 className="size-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors"
+                title={t("a11y.labels.dismiss")}
+                aria-label={t("a11y.labels.dismiss")}
               >
                 <X className="size-3.5 text-muted-foreground" />
               </button>

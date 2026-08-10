@@ -41,6 +41,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
@@ -584,6 +585,17 @@ function ProvidersCard() {
     }
   }
 
+  async function saveSetting(apply: () => Promise<void>) {
+    try {
+      await apply();
+      toast.success(t("settings.settingsSaved"));
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : t("settings.saveSettingsFailed"),
+      );
+    }
+  }
+
   const configured = providers.filter((p) => p.totalKeys > 0);
 
   return (
@@ -605,7 +617,7 @@ function ProvidersCard() {
           <Select
             value={defaultProvider}
             onValueChange={(next) => {
-              void setDefaultProvider(next as LlmProvider);
+              void saveSetting(() => setDefaultProvider(next as LlmProvider));
             }}
             disabled={loading || savingSettings}
           >
@@ -636,7 +648,7 @@ function ProvidersCard() {
             id="cross-provider-fallback"
             checked={crossProviderFallback}
             onCheckedChange={(checked) => {
-              void setCrossProviderFallback(checked);
+              void saveSetting(() => setCrossProviderFallback(checked));
             }}
             disabled={loading || savingSettings}
           />
@@ -1111,8 +1123,10 @@ function KeyCard({
                     size="sm"
                     variant="ghost"
                     className="h-7 px-2"
+                    disabled={saving}
                     onClick={handleSaveLabel}
                   >
+                    {saving && <Loader2 className="size-3 animate-spin" />}
                     {t("settings.keyCard.save")}
                   </Button>
                 </div>
@@ -1292,15 +1306,28 @@ function KeyCard({
               >
                 <History className="size-3.5" />
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400"
-                onClick={handleDelete}
-                disabled={deleting}
+              <ConfirmDialog
+                destructive
+                title={t("confirm.deleteApiKey.title")}
+                description={t("confirm.deleteApiKey.desc")}
+                confirmLabel={t("common.delete")}
+                pending={deleting}
+                onConfirm={handleDelete}
               >
-                <Trash2 className="size-3.5" />
-              </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400"
+                  disabled={deleting}
+                  aria-label={t("a11y.labels.deleteApiKey")}
+                >
+                  {deleting ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="size-3.5" />
+                  )}
+                </Button>
+              </ConfirmDialog>
             </div>
           </div>
         </div>
@@ -1801,15 +1828,25 @@ function ProviderSetupDialog({ status }: { status: IntegrationStatus }) {
 
         <DialogFooter className="gap-2 sm:justify-between">
           {stored ? (
-            <Button
-              variant="ghost"
-              className="text-destructive hover:text-destructive"
-              disabled={busy}
-              onClick={handleRemove}
+            <ConfirmDialog
+              destructive
+              title={t("confirm.removeCredentials.title", {
+                provider: meta.name,
+              })}
+              description={t("confirm.removeCredentials.desc")}
+              confirmLabel={t("common.delete")}
+              pending={remove.isPending}
+              onConfirm={handleRemove}
             >
-              <Trash2 className="size-4" />
-              {t("settings.integrations.removeCredentials")}
-            </Button>
+              <Button
+                variant="ghost"
+                className="text-destructive hover:text-destructive"
+                disabled={busy}
+              >
+                <Trash2 className="size-4" />
+                {t("settings.integrations.removeCredentials")}
+              </Button>
+            </ConfirmDialog>
           ) : (
             <span />
           )}
@@ -1901,14 +1938,22 @@ function IntegrationsCard() {
               </div>
               <ProviderSetupDialog status={status} />
               {connection ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={disconnect.isPending}
-                  onClick={() => handleDisconnect(provider)}
+                <ConfirmDialog
+                  destructive
+                  title={t("confirm.disconnect.title", { provider: meta.name })}
+                  description={t("confirm.disconnect.desc")}
+                  confirmLabel={t("settings.integrations.disconnect")}
+                  pending={disconnect.isPending}
+                  onConfirm={() => handleDisconnect(provider)}
                 >
-                  {t("settings.integrations.disconnect")}
-                </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={disconnect.isPending}
+                  >
+                    {t("settings.integrations.disconnect")}
+                  </Button>
+                </ConfirmDialog>
               ) : (
                 <Button
                   size="sm"

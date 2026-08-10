@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import i18n from "@/config/i18n";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Card,
@@ -103,7 +104,12 @@ export function MaterialSelectPanel({
   onSelectedIdsChange,
 }: MaterialSelectPanelProps) {
   const { t } = useTranslation();
-  const { data: records, isLoading } = useUploadRecords(folderId);
+  const {
+    data: records,
+    isLoading,
+    isError,
+    refetch,
+  } = useUploadRecords(folderId);
   const selectedId = selectedIds[0] ?? "";
 
   // Only completed (processed) records can be selected for quiz generation.
@@ -174,6 +180,14 @@ export function MaterialSelectPanel({
                 />
               ))}
             </div>
+          ) : isError ? (
+            <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground px-6">
+              <Upload className="size-10 opacity-30" />
+              <p className="text-sm font-medium">{t("materials.loadFailed")}</p>
+              <Button size="sm" variant="outline" onClick={() => refetch()}>
+                {t("common.retry")}
+              </Button>
+            </div>
           ) : usableRecords.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground px-6">
               <Upload className="size-10 opacity-30" />
@@ -226,7 +240,7 @@ export function MaterialSelectPanel({
                         )}
                         <span className="inline-flex items-center gap-1 text-[10px] text-green-500">
                           <CheckCircle2 className="size-3" />
-                          {i18n.t("materials.ready", "Ready")}
+                          {i18n.t("materials.ready")}
                         </span>
                       </div>
                     </div>

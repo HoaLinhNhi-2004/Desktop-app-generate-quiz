@@ -14,12 +14,17 @@ const LANGUAGES = [
 ] as const;
 
 export function LanguageSwitcher() {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0"
+          aria-label={t("a11y.labels.changeLanguage")}
+        >
           <Languages className="size-4" />
         </Button>
       </DropdownMenuTrigger>

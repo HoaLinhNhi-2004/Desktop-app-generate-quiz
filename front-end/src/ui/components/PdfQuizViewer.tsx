@@ -181,7 +181,9 @@ function QuestionRow({
             })}
             {question.explanation && (
               <div className="mt-3 text-xs text-muted-foreground bg-muted p-2 rounded-md">
-                <span className="font-semibold text-foreground">Giải thích:</span>{" "}
+                <span className="font-semibold text-foreground">
+                  {t("quizQuestion.explanationLabel")}
+                </span>{" "}
                 {question.explanation}
               </div>
             )}
@@ -567,6 +569,8 @@ export function PdfQuizViewer({
               variant="ghost"
               className="h-7 w-7"
               onClick={onClose}
+              title={t("common.close")}
+              aria-label={t("a11y.labels.closeViewer")}
             >
               <X className="size-4" />
             </Button>

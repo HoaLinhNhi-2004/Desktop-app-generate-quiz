@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -149,10 +150,17 @@ interface QuizHistorySectionProps {
 }
 
 function QuizHistorySection({ folderId }: QuizHistorySectionProps) {
-  const { data: quizSets, isLoading } = useQuizSets(folderId);
+  const { t } = useTranslation();
+  const {
+    data: quizSets,
+    isLoading,
+    isError,
+    refetch,
+  } = useQuizSets(folderId);
   const { data: folderStats } = useFolderDetailStats(folderId);
   const deleteQuizSet = useDeleteQuizSet();
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [viewerQuizSetId, setViewerQuizSetId] = useState<string | null>(null);
   const navigate = useNavigate();
 
@@ -175,9 +183,15 @@ function QuizHistorySection({ folderId }: QuizHistorySectionProps) {
     setViewerLoading(true);
     getQuizSetApi(viewerQuizSetId)
       .then((d) => _setViewerQs(d.questions as QuizQuestion[]))
-      .catch(() => _setViewerQs([]))
+      .catch(() => {
+        _setViewerQs([]);
+        setViewerQuizSetId(null);
+        toast.error(t("errors.loadQuizFailed"), {
+          description: t("errors.tryAgain"),
+        });
+      })
       .finally(() => setViewerLoading(false));
-  }, [viewerQuizSetId]);
+  }, [viewerQuizSetId, t]);
 
   const viewerPdfRecord = viewerUploads?.find(
     (r) => r.inputMode === "files" && r.fileType?.toLowerCase() === "pdf",
@@ -205,8 +219,8 @@ function QuizHistorySection({ folderId }: QuizHistorySectionProps) {
         },
       });
     } catch {
-      toast.error(i18n.t("errors.loadQuizFailed"), {
-        description: i18n.t("errors.tryAgain"),
+      toast.error(t("errors.loadQuizFailed"), {
+        description: t("errors.tryAgain"),
       });
     } finally {
       setLoadingId(null);
@@ -214,15 +228,17 @@ function QuizHistorySection({ folderId }: QuizHistorySectionProps) {
   };
 
   const handleDelete = (set: QuizSetSummary) => {
+    setDeletingId(set.id);
     deleteQuizSet.mutate(set.id, {
       onSuccess: () =>
-        toast.success(i18n.t("errors.deleted"), {
+        toast.success(t("errors.deleted"), {
           description: `"${set.title}"`,
         }),
       onError: () =>
-        toast.error(i18n.t("errors.deleteFailed"), {
-          description: i18n.t("errors.tryAgain"),
+        toast.error(t("errors.deleteFailed"), {
+          description: t("errors.tryAgain"),
         }),
+      onSettled: () => setDeletingId(null),
     });
   };
 
@@ -240,10 +256,18 @@ function QuizHistorySection({ folderId }: QuizHistorySectionProps) {
                   />
                 ))}
               </div>
+            ) : isError ? (
+              <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                <BookOpen className="size-8 opacity-40" />
+                <p className="text-sm">{t("quizHistory.loadFailed")}</p>
+                <Button size="sm" variant="outline" onClick={() => refetch()}>
+                  {t("common.retry")}
+                </Button>
+              </div>
             ) : !quizSets || quizSets.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
                 <BookOpen className="size-8 opacity-40" />
-                <p className="text-sm">{i18n.t("quizHistory.empty")}</p>
+                <p className="text-sm">{t("quizHistory.empty")}</p>
               </div>
             ) : (
               <div className="divide-y">
@@ -265,11 +289,11 @@ function QuizHistorySection({ folderId }: QuizHistorySectionProps) {
                             variant="ghost"
                             className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground"
                             onClick={() => setViewerQuizSetId(set.id)}
-                            title={i18n.t("quizHistory.viewSource")}
+                            title={t("quizHistory.viewSource")}
                           >
                             <BookOpenCheck className="size-3.5" />
                             <span className="hidden sm:inline">
-                              {i18n.t("quizHistory.viewSource")}
+                              {t("quizHistory.viewSource")}
                             </span>
                           </Button>
                           <Button
@@ -278,11 +302,11 @@ function QuizHistorySection({ folderId }: QuizHistorySectionProps) {
                             className="h-7 gap-1 text-xs"
                             disabled={loadingId === set.id}
                             onClick={() => navigate(`/quiz/${set.id}/edit`)}
-                            title="Edit"
+                            title={t("quizHistory.edit")}
                           >
                             <Edit3 className="size-3" />
                             <span className="hidden sm:inline">
-                              Edit
+                              {t("quizHistory.edit")}
                             </span>
                           </Button>
                           <Button
@@ -297,17 +321,34 @@ function QuizHistorySection({ folderId }: QuizHistorySectionProps) {
                             ) : (
                               <Play className="size-3" />
                             )}
-                            {i18n.t("quizHistory.start")}
+                            {t("quizHistory.start")}
                           </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                            disabled={deleteQuizSet.isPending}
-                            onClick={() => handleDelete(set)}
+                          <ConfirmDialog
+                            destructive
+                            title={t("confirm.deleteQuizSet.title", {
+                              name: set.title,
+                            })}
+                            description={t("confirm.deleteQuizSet.desc")}
+                            confirmLabel={t("common.delete")}
+                            pending={deletingId === set.id}
+                            onConfirm={() => handleDelete(set)}
                           >
-                            <Trash2 className="size-3" />
-                          </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                              disabled={deletingId === set.id}
+                              aria-label={t("a11y.labels.deleteQuizSet", {
+                                name: set.title,
+                              })}
+                            >
+                              {deletingId === set.id ? (
+                                <Loader2 className="size-3 animate-spin" />
+                              ) : (
+                                <Trash2 className="size-3" />
+                              )}
+                            </Button>
+                          </ConfirmDialog>
                         </div>
                       </div>
 
@@ -315,12 +356,11 @@ function QuizHistorySection({ folderId }: QuizHistorySectionProps) {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs text-muted-foreground">
                           {formatDate(set.createdAt)} · {set.questionCount}{" "}
-                          {i18n.t("common.questions")}
+                          {t("common.questions")}
                           {qStats && qStats.attemptCount > 0 && (
                             <>
                               {" "}
-                              · {qStats.attemptCount}{" "}
-                              {i18n.t("common.attempts")}
+                              · {qStats.attemptCount} {t("common.attempts")}
                             </>
                           )}
                         </span>
@@ -474,7 +514,7 @@ export function FolderDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { t } = useTranslation();
-  const { folders } = useFolders();
+  const { folders, loading: foldersLoading, error: foldersError } = useFolders();
   const folder = folders.find((f) => f.id === id);
 
   const [config, setConfig] = useState<QuizConfig>(DEFAULT_CONFIG);
@@ -521,6 +561,32 @@ export function FolderDetailPage() {
       } satisfies QuizRouteState,
     });
   };
+
+  if (foldersLoading) {
+    return (
+      <div className="flex flex-1 items-center justify-center min-h-0">
+        <Loader2 className="size-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (foldersError) {
+    return (
+      <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-3">
+        <p className="text-destructive font-medium">
+          {t("home.errorPrefix", { error: foldersError })}
+        </p>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => window.location.reload()}>
+            {t("common.retry")}
+          </Button>
+          <Button variant="ghost" onClick={() => navigate("/")}>
+            {t("common.back")}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 min-h-0 flex-col gap-4 p-6">
@@ -622,7 +688,7 @@ export function FolderDetailPage() {
                       onClick={() => setQuizAction("generate")}
                     >
                       <Sparkles className="size-3.5" />
-                      {t("smartImportQuiz.modeGenerate", { defaultValue: "Tạo từ tài liệu" })}
+                      {t("smartImportQuiz.modeGenerate")}
                     </button>
                     <button
                       type="button"
@@ -635,15 +701,12 @@ export function FolderDetailPage() {
                       onClick={() => setQuizAction("import")}
                     >
                       <FileSearch className="size-3.5" />
-                      {t("smartImportQuiz.modeImport", { defaultValue: "Trích xuất đề thi" })}
+                      {t("smartImportQuiz.modeImport")}
                     </button>
                   </div>
                   {quizAction === "import" && (
                     <p className="mt-2 text-[11px] text-muted-foreground leading-relaxed">
-                      {t("smartImportQuiz.importHint", {
-                        defaultValue:
-                          "AI sẽ tự động nhận diện và trích xuất nguyên bộ câu hỏi từ file đề thi. Số lượng, loại câu hỏi và độ khó sẽ được xác định tự động.",
-                      })}
+                      {t("smartImportQuiz.importHint")}
                     </p>
                   )}
                 </div>
@@ -665,15 +728,10 @@ export function FolderDetailPage() {
                         <FileSearch className="size-7 text-primary" />
                       </div>
                       <p className="text-sm font-medium">
-                        {t("smartImportQuiz.importReadyTitle", {
-                          defaultValue: "Q&A Document",
-                        })}
+                        {t("smartImportQuiz.importReadyTitle")}
                       </p>
                       <p className="text-xs text-muted-foreground leading-relaxed">
-                        {t("smartImportQuiz.importReadyDesc", {
-                          defaultValue:
-                            "Chọn file chứa đề thi bên trái, AI sẽ tự động trích xuất tất cả câu hỏi và đáp án.",
-                        })}
+                        {t("smartImportQuiz.importReadyDesc")}
                       </p>
                     </div>
                   )}
@@ -698,7 +756,7 @@ export function FolderDetailPage() {
                       <>
                         <Loader2 className="size-5 animate-spin" />
                         {quizAction === "import"
-                          ? t("smartImportQuiz.importing", { defaultValue: "Đang trích xuất..." })
+                          ? t("smartImportQuiz.importing")
                           : t("folder.streamRunning")}
                       </>
                     ) : (
@@ -709,7 +767,7 @@ export function FolderDetailPage() {
                           <Sparkles className="size-5" />
                         )}
                         {quizAction === "import"
-                          ? t("smartImportQuiz.importBtn", { defaultValue: "Trích xuất câu hỏi" })
+                          ? t("smartImportQuiz.importBtn")
                           : t("folder.createQuizBtn")}
                         <ArrowRight className="size-4" />
                       </>

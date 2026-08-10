@@ -20,6 +20,7 @@ function GlobalSmartImportWidget() {
     <SmartImportWidget
       job={ctx.job}
       isMinimized={ctx.isMinimized}
+      isDisconnected={ctx.isDisconnected}
       onMinimize={() => ctx.setIsMinimized(true)}
       onExpand={() => ctx.setIsMinimized(false)}
       onDismiss={ctx.dismiss}

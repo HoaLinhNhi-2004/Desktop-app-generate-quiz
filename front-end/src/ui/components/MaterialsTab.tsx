@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -210,7 +211,7 @@ function getProcessingBadge(
       return (
         <span className="inline-flex items-center gap-1 text-[10px] text-green-500">
           <CheckCircle2 className="size-3" />
-          {i18n.t("materials.ready", "Ready")}
+          {i18n.t("materials.ready")}
         </span>
       );
     case "failed":
@@ -249,6 +250,15 @@ function UploadForm({ folderId }: { folderId: string }) {
   const { data: integrations } = useIntegrations();
   const connectIntegration = useConnectIntegration();
   const openDrivePicker = useOpenDrivePicker();
+
+  const reportExternalOpen = useCallback(
+    async (open: () => Promise<boolean>) => {
+      const opened = await open();
+      if (opened) toast.info(i18n.t("settings.integrations.browserOpened"));
+      else toast.error(i18n.t("settings.integrations.openFailed"));
+    },
+    [],
+  );
   const notionStatus = integrations?.find((i) => i.provider === "notion");
   const notionConnected = !!notionStatus?.connection;
   const googleStatus = integrations?.find((i) => i.provider === "google");
@@ -267,9 +277,16 @@ function UploadForm({ folderId }: { folderId: string }) {
   const [isDragging, setIsDragging] = useState(false);
 
   const processFiles = useCallback((fileList: FileList | File[]) => {
-    const valid = Array.from(fileList).filter((f) =>
-      ACCEPTED_TYPES.includes(f.type),
-    );
+    const all = Array.from(fileList);
+    const valid = all.filter((f) => ACCEPTED_TYPES.includes(f.type));
+    const rejected = all.filter((f) => !ACCEPTED_TYPES.includes(f.type));
+    if (rejected.length > 0) {
+      toast.error(i18n.t("materials.unsupportedFile"), {
+        description: i18n.t("materials.unsupportedFileDesc", {
+          names: rejected.map((f) => f.name).join(", "),
+        }),
+      });
+    }
     if (valid.length > 0) setPendingFiles((prev) => [...prev, ...valid]);
   }, []);
 
@@ -572,6 +589,7 @@ function UploadForm({ folderId }: { folderId: string }) {
                       variant="ghost"
                       size="icon"
                       className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
+                      aria-label={t("a11y.labels.removeFile", { name: f.name })}
                       onClick={() => removeFile(i)}
                     >
                       <X className="size-4" />
@@ -685,7 +703,7 @@ function UploadForm({ folderId }: { folderId: string }) {
             <Button
               variant="outline"
               className="gap-2"
-              onClick={() => connectIntegration("notion")}
+              onClick={() => reportExternalOpen(() => connectIntegration("notion"))}
             >
               <ExternalLink className="size-4" />
               {t("materials.notionConnect")}
@@ -762,7 +780,7 @@ function UploadForm({ folderId }: { folderId: string }) {
               <Button
                 variant="outline"
                 className="gap-2"
-                onClick={() => openDrivePicker(folderId)}
+                onClick={() => reportExternalOpen(() => openDrivePicker(folderId))}
               >
                 <HardDrive className="size-4" />
                 {t("materials.drivePick")}
@@ -771,7 +789,7 @@ function UploadForm({ folderId }: { folderId: string }) {
               <Button
                 variant="outline"
                 className="gap-2"
-                onClick={() => connectIntegration("google")}
+                onClick={() => reportExternalOpen(() => connectIntegration("google"))}
               >
                 <ExternalLink className="size-4" />
                 {t("materials.driveConnect")}
@@ -799,6 +817,8 @@ function UploadForm({ folderId }: { folderId: string }) {
                   : "border-input focus:ring-ring/30",
               )}
               placeholder={t("materials.textPlaceholder")}
+              aria-label={t("a11y.labels.textContent")}
+              aria-invalid={rawText.length > TEXT_MAX_CHARS}
               value={rawText}
               onChange={(e) => setRawText(e.target.value)}
               spellCheck={false}
@@ -853,9 +873,15 @@ function UploadForm({ folderId }: { folderId: string }) {
 
 function MaterialsList({ folderId }: { folderId: string }) {
   const { t } = useTranslation();
-  const { data: records, isLoading } = useUploadRecords(folderId);
+  const {
+    data: records,
+    isLoading,
+    isError,
+    refetch,
+  } = useUploadRecords(folderId);
   const deleteRecord = useDeleteUploadRecord();
   const reprocess = useReprocessUpload();
+  const [pendingId, setPendingId] = useState<string | null>(null);
   const hasActive = !!records?.some(
     (r) =>
       r.processingStatus === "pending" || r.processingStatus === "processing",
@@ -863,6 +889,7 @@ function MaterialsList({ folderId }: { folderId: string }) {
   const liveProgress = useUploadProcessingStream(folderId, hasActive);
 
   const handleDelete = (record: UploadRecord) => {
+    setPendingId(record.id);
     deleteRecord.mutate(record.id, {
       onSuccess: () =>
         toast.success(t("materials.deleteSuccess"), {
@@ -874,7 +901,13 @@ function MaterialsList({ folderId }: { folderId: string }) {
         toast.error(t("materials.deleteFailed"), {
           description: t("materials.deleteFailedDesc"),
         }),
+      onSettled: () => setPendingId(null),
     });
+  };
+
+  const handleReprocess = (record: UploadRecord) => {
+    setPendingId(record.id);
+    reprocess.mutate(record.id, { onSettled: () => setPendingId(null) });
   };
 
   if (isLoading) {
@@ -886,6 +919,18 @@ function MaterialsList({ folderId }: { folderId: string }) {
             className="h-14 w-full animate-pulse rounded-md bg-muted"
           />
         ))}
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
+        <Upload className="size-10 opacity-30" />
+        <p className="text-sm font-medium">{t("materials.loadFailed")}</p>
+        <Button size="sm" variant="outline" onClick={() => refetch()}>
+          {t("common.retry")}
+        </Button>
       </div>
     );
   }
@@ -995,22 +1040,46 @@ function MaterialsList({ folderId }: { folderId: string }) {
                 size="sm"
                 variant="ghost"
                 className="h-8 w-8 p-0 shrink-0 text-muted-foreground hover:text-blue-500"
-                disabled={reprocess.isPending}
-                onClick={() => reprocess.mutate(record.id)}
+                disabled={pendingId === record.id}
+                onClick={() => handleReprocess(record)}
                 title={t("materials.reprocess")}
+                aria-label={t("a11y.labels.reprocessMaterial", {
+                  name: record.originalName,
+                })}
               >
-                <RefreshCw className="size-3.5" />
+                {pendingId === record.id ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-3.5" />
+                )}
               </Button>
             )}
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-8 w-8 p-0 shrink-0 text-muted-foreground hover:text-destructive"
-              disabled={deleteRecord.isPending}
-              onClick={() => handleDelete(record)}
+            <ConfirmDialog
+              destructive
+              title={t("confirm.deleteMaterial.title", {
+                name: record.originalName,
+              })}
+              description={t("confirm.deleteMaterial.desc")}
+              confirmLabel={t("common.delete")}
+              pending={pendingId === record.id}
+              onConfirm={() => handleDelete(record)}
             >
-              <Trash2 className="size-3.5" />
-            </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-8 w-8 p-0 shrink-0 text-muted-foreground hover:text-destructive"
+                disabled={pendingId === record.id}
+                aria-label={t("a11y.labels.deleteMaterial", {
+                  name: record.originalName,
+                })}
+              >
+                {pendingId === record.id ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="size-3.5" />
+                )}
+              </Button>
+            </ConfirmDialog>
           </motion.div>
         ))}
       </AnimatePresence>

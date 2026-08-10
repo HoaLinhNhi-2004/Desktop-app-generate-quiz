@@ -23,6 +23,7 @@ import {
   Clock,
   Star,
   FolderInput,
+  Loader2,
 } from "lucide-react";
 import { useFolders } from "@/features/folders";
 import { useSmartImportContext } from "@/features/smart-import";
@@ -112,7 +113,9 @@ export function HomePage() {
   const handleStartImport = () => {
     const trimmed = importPath.trim();
     if (!trimmed) return;
-    smartImport.startImport(trimmed);
+    // Failures surface as a toast from the hook — the dialog closes first so the
+    // user is not stuck staring at a frozen form.
+    void smartImport.startImport(trimmed);
     setImportOpen(false);
     setImportPath("");
   };
@@ -269,10 +272,16 @@ export function HomePage() {
                 <Button
                   variant="outline"
                   className="gap-2"
-                  disabled={smartImport.isStarting || (smartImport.job !== null && smartImport.job.status !== "completed" && smartImport.job.status !== "error")}
+                  disabled={
+                    smartImport.isStarting ||
+                    (smartImport.job !== null &&
+                      !smartImport.isDisconnected &&
+                      smartImport.job.status !== "completed" &&
+                      smartImport.job.status !== "error")
+                  }
                 >
                   <FolderInput className="size-4" />
-                  {t("home.importFolder", "Import Folder")}
+                  {t("home.importFolder")}
                 </Button>
               </DialogTrigger>
               <DialogContent className="sm:max-w-[480px]">
@@ -389,6 +398,8 @@ export function HomePage() {
                               : "3px solid transparent",
                           outlineOffset: "2px",
                         }}
+                        aria-label={t("a11y.labels.pickColor", { color })}
+                        aria-pressed={selectedColor === color}
                         onClick={() => setSelectedColor(color)}
                       />
                     ))}
@@ -399,7 +410,12 @@ export function HomePage() {
                 <Button variant="outline" onClick={() => setOpen(false)}>
                   {t("common.cancel")}
                 </Button>
-                <Button onClick={handleCreate} disabled={!folderName.trim()}>
+                <Button
+                  onClick={handleCreate}
+                  disabled={!folderName.trim() || isSubmitting}
+                  className="gap-2"
+                >
+                  {isSubmitting && <Loader2 className="size-4 animate-spin" />}
                   {t("home.createFolder")}
                 </Button>
               </DialogFooter>
@@ -461,6 +477,8 @@ export function HomePage() {
           <div className="flex items-center gap-1 bg-muted/40 rounded-xl p-1">
             <button
               onClick={() => changeViewMode("grid")}
+              aria-label={t("a11y.labels.gridView")}
+              aria-pressed={viewMode === "grid"}
               className={cn(
                 "size-8 flex items-center justify-center rounded-lg transition-all",
                 viewMode === "grid"
@@ -472,6 +490,8 @@ export function HomePage() {
             </button>
             <button
               onClick={() => changeViewMode("list")}
+              aria-label={t("a11y.labels.listView")}
+              aria-pressed={viewMode === "list"}
               className={cn(
                 "size-8 flex items-center justify-center rounded-lg transition-all",
                 viewMode === "list"
@@ -704,6 +724,8 @@ export function HomePage() {
                           : "3px solid transparent",
                       outlineOffset: "2px",
                     }}
+                    aria-label={t("a11y.labels.pickColor", { color })}
+                    aria-pressed={editColor === color}
                     onClick={() => setEditColor(color)}
                   />
                 ))}
@@ -717,7 +739,9 @@ export function HomePage() {
             <Button
               onClick={handleUpdate}
               disabled={!editName.trim() || isSubmitting}
+              className="gap-2"
             >
+              {isSubmitting && <Loader2 className="size-4 animate-spin" />}
               {t("home.editDialog.saveChanges")}
             </Button>
           </DialogFooter>

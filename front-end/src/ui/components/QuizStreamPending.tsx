@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { parseQuizError } from "@/lib/quiz-error";
 import type { QuizSource, QuizStreamStage } from "@/features/quizz";
 
@@ -39,6 +40,7 @@ const STAGE_ICONS: Record<QuizStreamStage, typeof Brain> = {
 interface QuizStreamPendingProps {
   source: QuizSource;
   onBackToFolder?: () => void;
+  onCancel?: () => void;
 }
 
 /**
@@ -49,6 +51,7 @@ interface QuizStreamPendingProps {
 export function QuizStreamPending({
   source,
   onBackToFolder,
+  onCancel,
 }: QuizStreamPendingProps) {
   const { t } = useTranslation();
 
@@ -142,6 +145,20 @@ export function QuizStreamPending({
         <div className="h-3 w-full animate-pulse rounded-md bg-muted" />
         <div className="h-3 w-2/3 animate-pulse rounded-md bg-muted" />
       </div>
+
+      {onCancel && (
+        <ConfirmDialog
+          destructive
+          title={t("confirm.cancelGeneration.title")}
+          description={t("confirm.cancelGeneration.desc")}
+          confirmLabel={t("confirm.cancelGeneration.action")}
+          onConfirm={onCancel}
+        >
+          <Button variant="ghost" size="sm" className="text-muted-foreground">
+            {t("common.cancel")}
+          </Button>
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

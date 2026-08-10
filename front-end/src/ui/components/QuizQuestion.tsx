@@ -4,7 +4,6 @@ import { cn } from "@/lib/utils";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Copy, Check, Volume2, VolumeX } from "lucide-react";
 import type { QuizQuestion as QuizQuestionType } from "@/features/quizz";
@@ -231,23 +230,10 @@ export function QuizQuestion({
         </p>
       </div>
 
-      {/* Options */}
-      {question.type === "fill-blank" ? (
-        <Input
-          placeholder={t("quizQuestion.fillPlaceholder")}
-          value={selectedAnswer ?? ""}
-          onChange={(e) => onAnswerChange(question.id, e.target.value)}
-          disabled={showResult}
-          className={cn(
-            showResult &&
-              selectedAnswer === question.correctAnswerId &&
-              "border-green-500",
-            showResult &&
-              selectedAnswer !== question.correctAnswerId &&
-              "border-red-500",
-          )}
-        />
-      ) : question.type === "multiple-answer" ? (
+      {/* Options — fill-blank is generated as a/b/c/d like multiple-choice
+          (see quiz_generator.py), so it is answered by picking an option, not
+          by typing: grading compares option ids. */}
+      {question.type === "multiple-answer" ? (
         <div
           className="space-y-2"
           role="group"

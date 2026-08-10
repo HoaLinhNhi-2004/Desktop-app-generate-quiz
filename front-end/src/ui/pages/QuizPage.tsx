@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import confetti from "canvas-confetti";
+import { toast } from "sonner";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useSpeech } from "@/lib/use-speech";
@@ -27,17 +28,7 @@ import {
   FileText,
   Image as ImageIcon,
 } from "lucide-react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { DocxPreview } from "../components/DocxPreview";
 import {
   Dialog,
@@ -119,6 +110,18 @@ export function QuizPage() {
     saveDraft({ answers, currentIndex });
   }, [answers, currentIndex, saveDraft]);
 
+  // Answers survive in-app navigation via the draft, but a reload restarts the
+  // renderer — warn before the browser throws the attempt away.
+  useEffect(() => {
+    if (isSubmitted || Object.keys(answers).length === 0) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [answers, isSubmitted]);
+
   const currentQuestion = questions[currentIndex];
 
   // Timer
@@ -144,6 +147,22 @@ export function QuizPage() {
     [isSubmitted],
   );
 
+  // Export helpers write a file and resolve; without this the only sign of
+  // failure was an unhandled rejection in the console.
+  const runExport = useCallback(
+    async (exporter: () => void | Promise<void>) => {
+      try {
+        await exporter();
+        toast.success(t("export.success"));
+      } catch (err) {
+        toast.error(t("export.failed"), {
+          description: err instanceof Error ? err.message : undefined,
+        });
+      }
+    },
+    [t],
+  );
+
   const handleToggleRead = useCallback(
     (q: QuizQuestionType) => {
       if (!ttsEnabled || !speech.supported) return;
@@ -158,6 +177,7 @@ export function QuizPage() {
   );
 
   const answeredCount = Object.keys(answers).length;
+  const hasUnsavedProgress = answeredCount > 0 && !isSubmitted;
   // Progress is measured against the target, not against what happens to have
   // arrived, so the bar does not jump backwards as questions stream in.
   const progressPercent =
@@ -386,11 +406,7 @@ export function QuizPage() {
           } else if (key.length === 1 && key >= "1" && key <= "4") {
             optionIndex = parseInt(key) - 1;
           }
-          if (
-            optionIndex >= 0 &&
-            currentQuestion.type !== "fill-blank" &&
-            currentQuestion.options[optionIndex]
-          ) {
+          if (optionIndex >= 0 && currentQuestion.options[optionIndex]) {
             e.preventDefault();
             const optId = currentQuestion.options[optionIndex].id;
             if (currentQuestion.type === "multiple-answer") {
@@ -439,15 +455,30 @@ export function QuizPage() {
       <div className="flex min-h-0 flex-1 flex-col gap-4">
         {/* Top bar */}
         <div className="flex items-center justify-between">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate("/")}
-            className="gap-1.5"
-          >
-            <ArrowLeft className="size-4" />
-            {t("quiz.back")}
-          </Button>
+          {hasUnsavedProgress ? (
+            <ConfirmDialog
+              destructive
+              title={t("confirm.leaveQuiz.title")}
+              description={t("confirm.leaveQuiz.desc", { count: answeredCount })}
+              confirmLabel={t("confirm.leaveQuiz.action")}
+              onConfirm={() => navigate("/")}
+            >
+              <Button variant="ghost" size="sm" className="gap-1.5">
+                <ArrowLeft className="size-4" />
+                {t("quiz.back")}
+              </Button>
+            </ConfirmDialog>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate("/")}
+              className="gap-1.5"
+            >
+              <ArrowLeft className="size-4" />
+              {t("quiz.back")}
+            </Button>
+          )}
           <div className="flex items-center gap-3">
             {sourceFiles.length > 0 && (
               <Dialog>
@@ -529,21 +560,27 @@ export function QuizPage() {
                   <DropdownMenuSubContent>
                     <DropdownMenuItem
                       onClick={() =>
-                        exportQuizToDocx(questions, t("quiz.title"), true)
+                        runExport(() =>
+                          exportQuizToDocx(questions, t("quiz.title"), true),
+                        )
                       }
                     >
                       {t("quiz.withAnswers")}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() =>
-                        exportQuizToDocx(questions, t("quiz.title"), false)
+                        runExport(() =>
+                          exportQuizToDocx(questions, t("quiz.title"), false),
+                        )
                       }
                     >
                       {t("quiz.withoutAnswers")}
                     </DropdownMenuItem>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
-                <DropdownMenuItem onClick={() => exportQuizToKahoot(questions)}>
+                <DropdownMenuItem
+                  onClick={() => runExport(() => exportQuizToKahoot(questions))}
+                >
                   <FileSpreadsheet className="size-4" />
                   {t("quiz.exportKahoot")}
                 </DropdownMenuItem>
@@ -661,6 +698,14 @@ export function QuizPage() {
                     source={source}
                     onBackToFolder={
                       folderId ? () => navigate(`/folder/${folderId}`) : undefined
+                    }
+                    onCancel={
+                      isLive && !isStreamComplete
+                        ? () => {
+                            stopQuizStream();
+                            navigate(folderId ? `/folder/${folderId}` : "/");
+                          }
+                        : undefined
                     }
                   />
                 )}
@@ -1021,33 +1066,18 @@ export function QuizPage() {
                 </Button>
 
                 {isLive && !isStreamComplete && loadedCount > 0 && (
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="ghost" size="sm" className="w-full">
-                        {t("quiz.stream.stopAndSubmit")}
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>
-                          {t("quiz.stream.stopConfirmTitle")}
-                        </AlertDialogTitle>
-                        <AlertDialogDescription>
-                          {t("quiz.stream.stopConfirmDesc", {
-                            count: loadedCount,
-                          })}
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>
-                          {t("common.cancel")}
-                        </AlertDialogCancel>
-                        <AlertDialogAction onClick={handleSubmit}>
-                          {t("quiz.stream.stopConfirmAction")}
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
+                  <ConfirmDialog
+                    title={t("quiz.stream.stopConfirmTitle")}
+                    description={t("quiz.stream.stopConfirmDesc", {
+                      count: loadedCount,
+                    })}
+                    confirmLabel={t("quiz.stream.stopConfirmAction")}
+                    onConfirm={handleSubmit}
+                  >
+                    <Button variant="ghost" size="sm" className="w-full">
+                      {t("quiz.stream.stopAndSubmit")}
+                    </Button>
+                  </ConfirmDialog>
                 )}
               </div>
             </div>

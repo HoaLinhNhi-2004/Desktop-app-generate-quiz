@@ -83,6 +83,7 @@ function QuestionRow({
   active: boolean;
   onClick: () => void;
 }) {
+  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
 
   const handleClick = () => {
@@ -173,7 +174,9 @@ function QuestionRow({
             })}
             {question.explanation && (
               <div className="mt-3 text-xs text-muted-foreground bg-muted p-2 rounded-md">
-                <span className="font-semibold text-foreground">Giải thích:</span>{" "}
+                <span className="font-semibold text-foreground">
+                  {t("quizQuestion.explanationLabel")}
+                </span>{" "}
                 {question.explanation}
               </div>
             )}
@@ -397,6 +400,8 @@ export function YouTubeSourceViewer({
             variant="ghost"
             className="size-7 shrink-0"
             onClick={onClose}
+            title={t("common.close")}
+            aria-label={t("a11y.labels.closeViewer")}
           >
             <X className="size-4" />
           </Button>

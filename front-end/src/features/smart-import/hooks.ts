@@ -9,9 +9,12 @@ import {
   resumeImportApi,
   cancelImportApi,
 } from "./api";
-import { notifyJobDone, notifyJobFailed, notifyInfo } from "@/lib/notify";
+import { notifyJobDone, notifyJobFailed, notifyInfo, notifyError } from "@/lib/notify";
 
 const POLL_INTERVAL = 1500;
+// Backend restarts wipe in-memory job state, so a run of failed polls means the
+// job is gone for good — not a blip. Give up rather than freeze the widget.
+const MAX_POLL_FAILURES = 5;
 type TerminalStatus = "completed" | "error" | "cancelled";
 
 export function useSmartImport() {
@@ -20,8 +23,10 @@ export function useSmartImport() {
   const [job, setJob] = useState<ImportJob | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isDisconnected, setIsDisconnected] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollFailuresRef = useRef(0);
   const notifiedJobIdRef = useRef<string | null>(null); // tracks last job id we notified about
 
   const stopPolling = useCallback(() => {
@@ -68,9 +73,12 @@ export function useSmartImport() {
   const startPolling = useCallback(
     (jobId: string) => {
       stopPolling();
+      pollFailuresRef.current = 0;
+      setIsDisconnected(false);
       pollRef.current = setInterval(async () => {
         try {
           const progress = await getImportProgressApi(jobId);
+          pollFailuresRef.current = 0;
           setJob(progress);
           if (
             progress.status === "completed" ||
@@ -81,11 +89,18 @@ export function useSmartImport() {
             notifyTerminal(progress, progress.status);
           }
         } catch {
-          // Silently ignore polling errors
+          pollFailuresRef.current += 1;
+          if (pollFailuresRef.current >= MAX_POLL_FAILURES) {
+            stopPolling();
+            setIsDisconnected(true);
+            notifyJobFailed(t("notifications.smartImport.disconnected"), {
+              description: t("notifications.smartImport.disconnectedDesc"),
+            });
+          }
         }
       }, POLL_INTERVAL);
     },
-    [stopPolling, notifyTerminal],
+    [stopPolling, notifyTerminal, t],
   );
 
   const startImport = useCallback(
@@ -100,12 +115,18 @@ export function useSmartImport() {
         setJob(initial);
         startPolling(jobId);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Import failed");
+        const message = err instanceof Error ? err.message : "Import failed";
+        setError(message);
+        // The dialog closes before this resolves, so a toast is the only place
+        // the user can learn the import never started.
+        notifyError(t("notifications.smartImport.failed"), {
+          description: message,
+        });
       } finally {
         setIsStarting(false);
       }
     },
-    [startPolling],
+    [startPolling, t],
   );
 
   const pauseImport = useCallback(async () => {
@@ -116,10 +137,12 @@ export function useSmartImport() {
       await pauseImportApi(jobId);
       await refetchOnce(jobId);
     } catch (err) {
-      console.error("Failed to pause:", err);
       setJob((prev) => (prev ? { ...prev, paused: false } : prev));
+      notifyError(t("notifications.smartImport.pauseFailed"), {
+        description: err instanceof Error ? err.message : undefined,
+      });
     }
-  }, [job, refetchOnce]);
+  }, [job, refetchOnce, t]);
 
   const resumeImport = useCallback(async () => {
     if (!job) return;
@@ -129,10 +152,12 @@ export function useSmartImport() {
       await resumeImportApi(jobId);
       await refetchOnce(jobId);
     } catch (err) {
-      console.error("Failed to resume:", err);
       setJob((prev) => (prev ? { ...prev, paused: true } : prev));
+      notifyError(t("notifications.smartImport.resumeFailed"), {
+        description: err instanceof Error ? err.message : undefined,
+      });
     }
-  }, [job, refetchOnce]);
+  }, [job, refetchOnce, t]);
 
   const cancelImport = useCallback(async () => {
     if (!job) return;
@@ -144,14 +169,18 @@ export function useSmartImport() {
       await cancelImportApi(jobId);
       await refetchOnce(jobId);
     } catch (err) {
-      console.error("Failed to cancel:", err);
+      setJob((prev) => (prev ? { ...prev, cancelRequested: false } : prev));
+      notifyError(t("notifications.smartImport.cancelFailed"), {
+        description: err instanceof Error ? err.message : undefined,
+      });
     }
-  }, [job, refetchOnce]);
+  }, [job, refetchOnce, t]);
 
   const dismiss = useCallback(() => {
     stopPolling();
     setJob(null);
     setError(null);
+    setIsDisconnected(false);
   }, [stopPolling]);
 
   useEffect(() => {
@@ -162,6 +191,7 @@ export function useSmartImport() {
     job,
     isStarting,
     error,
+    isDisconnected,
     isMinimized,
     setIsMinimized,
     startImport,

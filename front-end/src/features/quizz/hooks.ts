@@ -489,10 +489,33 @@ export interface QuizDraft {
 // quiz is still generating must not discard what has been answered so far.
 const quizDrafts = new Map<string, QuizDraft>();
 
+// The in-memory map dies on reload, and in Electron Ctrl+R is one keystroke
+// away — so mirror it to localStorage as well.
+const DRAFT_STORAGE_PREFIX = "quiz-draft:";
+
+function draftStorageKey(quizSetId: string): string {
+  return `${DRAFT_STORAGE_PREFIX}${quizSetId}`;
+}
+
+function readStoredDraft(quizSetId: string): QuizDraft | undefined {
+  try {
+    const raw = localStorage.getItem(draftStorageKey(quizSetId));
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as QuizDraft;
+    if (!parsed || typeof parsed !== "object" || !parsed.answers)
+      return undefined;
+    return { answers: parsed.answers, currentIndex: parsed.currentIndex ?? 0 };
+  } catch {
+    return undefined;
+  }
+}
+
 export function useQuizDraft(quizSetId: string | undefined) {
   const [initialDraft] = useState<QuizDraft>(
     () =>
-      (quizSetId ? quizDrafts.get(quizSetId) : undefined) ?? {
+      (quizSetId
+        ? (quizDrafts.get(quizSetId) ?? readStoredDraft(quizSetId))
+        : undefined) ?? {
         answers: {},
         currentIndex: 0,
       },
@@ -500,13 +523,25 @@ export function useQuizDraft(quizSetId: string | undefined) {
 
   const saveDraft = useCallback(
     (draft: QuizDraft) => {
-      if (quizSetId) quizDrafts.set(quizSetId, draft);
+      if (!quizSetId) return;
+      quizDrafts.set(quizSetId, draft);
+      try {
+        localStorage.setItem(draftStorageKey(quizSetId), JSON.stringify(draft));
+      } catch {
+        // Quota or private mode — the in-memory copy still covers navigation.
+      }
     },
     [quizSetId],
   );
 
   const clearDraft = useCallback(() => {
-    if (quizSetId) quizDrafts.delete(quizSetId);
+    if (!quizSetId) return;
+    quizDrafts.delete(quizSetId);
+    try {
+      localStorage.removeItem(draftStorageKey(quizSetId));
+    } catch {
+      // Nothing to recover from — the draft is already gone in memory.
+    }
   }, [quizSetId]);
 
   return { initialDraft, saveDraft, clearDraft };

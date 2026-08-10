@@ -1,20 +1,10 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { motion, type Transition } from "framer-motion";
 import { Trash2, Star, Folder, Pencil, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import i18n from "@/config/i18n";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -39,7 +29,7 @@ interface PaperConfig {
   hoverY: number;
   hoverRotate: number;
   left: number;
-  title: string;
+  titleKey: string;
 }
 
 // ─── Physics ─────────────────────────────────────────────────────────────────
@@ -67,7 +57,7 @@ const PAPERS: PaperConfig[] = [
     hoverY: -30,
     hoverRotate: -9,
     left: 12,
-    title: "Quiz Set",
+    titleKey: "interactiveFolder.quizSet",
   },
   {
     restRotate: 2,
@@ -75,7 +65,7 @@ const PAPERS: PaperConfig[] = [
     hoverY: -40,
     hoverRotate: 4,
     left: 18,
-    title: i18n.t("interactiveFolder.paper1"),
+    titleKey: "interactiveFolder.paper1",
   },
   {
     restRotate: 7,
@@ -83,7 +73,7 @@ const PAPERS: PaperConfig[] = [
     hoverY: -24,
     hoverRotate: 11,
     left: 24,
-    title: i18n.t("interactiveFolder.paper2"),
+    titleKey: "interactiveFolder.paper2",
   },
 ];
 
@@ -344,15 +334,28 @@ export function InteractiveFolder({
   onToggleFavorite,
   onEdit,
 }: InteractiveFolderProps) {
+  const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const isProcessing = processingCount > 0;
 
   return (
     <motion.div
-      className="relative cursor-pointer select-none flex flex-col gap-3"
+      className="relative cursor-pointer select-none flex flex-col gap-3 rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      role="button"
+      tabIndex={0}
+      aria-label={t("a11y.labels.openFolder", { name })}
       onHoverStart={() => setIsHovered(true)}
       onHoverEnd={() => setIsHovered(false)}
+      onFocus={() => setIsHovered(true)}
+      onBlur={() => setIsHovered(false)}
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
     >
       <div className="relative w-full" style={{ aspectRatio: "1 / 0.82" }}>
         {/* ── BACK ── */}
@@ -382,7 +385,7 @@ export function InteractiveFolder({
         {quizCount > 0 &&
           PAPERS.map((cfg) => (
             <motion.div
-              key={cfg.title}
+              key={cfg.titleKey}
               className="absolute z-[5] rounded-lg overflow-hidden"
               style={{
                 width: "62%",
@@ -404,7 +407,7 @@ export function InteractiveFolder({
             >
               <div className="p-2.5 pt-3 space-y-1.5">
                 <p className="text-[9px] font-bold text-gray-600 truncate leading-none">
-                  {cfg.title}
+                  {t(cfg.titleKey)}
                 </p>
                 <div className="h-[2.5px] rounded-full bg-gray-300/60 w-full" />
                 <div className="h-[2.5px] rounded-full bg-gray-200/50 w-[85%]" />
@@ -475,11 +478,13 @@ export function InteractiveFolder({
                   transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
                 >
                   <Loader2 className="size-2.5 animate-spin" />
-                  Processing {processingCount}...
+                  {t("interactiveFolder.processing", { count: processingCount })}
                 </motion.span>
               ) : (
                 <span className="text-[10px] text-white/60">
-                  {quizCount === 0 ? "Empty" : `${quizCount} Documents`}
+                  {quizCount === 0
+                    ? t("interactiveFolder.empty")
+                    : t("interactiveFolder.documents", { count: quizCount })}
                 </span>
               )}
             </div>
@@ -496,6 +501,13 @@ export function InteractiveFolder({
               )}
               animate={{ opacity: isHovered || isFavorite ? 1 : 0 }}
               transition={{ duration: 0.2 }}
+              aria-label={t(
+                isFavorite
+                  ? "a11y.labels.removeFavorite"
+                  : "a11y.labels.addFavorite",
+                { name },
+              )}
+              aria-pressed={isFavorite}
               onClick={(e) => {
                 e.stopPropagation();
                 onToggleFavorite();
@@ -514,6 +526,7 @@ export function InteractiveFolder({
             {onEdit && (
               <button
                 className="size-6 flex items-center justify-center rounded-md bg-black/20 backdrop-blur-sm text-white/50 hover:text-white hover:bg-white/20 transition-colors"
+                aria-label={t("a11y.labels.editFolder", { name })}
                 onClick={(e) => {
                   e.stopPropagation();
                   onEdit();
@@ -522,33 +535,21 @@ export function InteractiveFolder({
                 <Pencil className="size-3" />
               </button>
             )}
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <button
-                  className="size-6 flex items-center justify-center rounded-md bg-black/20 backdrop-blur-sm text-white/50 hover:text-white hover:bg-red-500/50 transition-colors"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <Trash2 className="size-3" />
-                </button>
-              </AlertDialogTrigger>
-              <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Xóa thư mục "{name}"?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Thao tác này sẽ xóa vĩnh viễn thư mục và toàn bộ tài liệu bên trong. Bạn không thể hoàn tác.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Hủy</AlertDialogCancel>
-                  <AlertDialogAction
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    onClick={onDelete}
-                  >
-                    Xóa
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <ConfirmDialog
+              stopPropagation
+              destructive
+              title={t("confirm.deleteFolder.title", { name })}
+              description={t("confirm.deleteFolder.desc")}
+              confirmLabel={t("common.delete")}
+              onConfirm={onDelete}
+            >
+              <button
+                className="size-6 flex items-center justify-center rounded-md bg-black/20 backdrop-blur-sm text-white/50 hover:text-white hover:bg-red-500/50 transition-colors"
+                aria-label={t("a11y.labels.deleteFolder", { name })}
+              >
+                <Trash2 className="size-3" />
+              </button>
+            </ConfirmDialog>
           </motion.div>
         </div>
       </div>
@@ -571,14 +572,25 @@ export function FolderListItem({
   onToggleFavorite,
   onEdit,
 }: InteractiveFolderProps) {
+  const { t } = useTranslation();
   const isProcessing = processingCount > 0;
   return (
     <motion.div
       className={cn(
-        "group flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer hover:bg-muted/50 transition-colors border select-none",
+        "group flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer hover:bg-muted/50 transition-colors border select-none outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
         isProcessing ? "border-blue-500/20 bg-blue-500/5" : "border-transparent hover:border-border/40"
       )}
+      role="button"
+      tabIndex={0}
+      aria-label={t("a11y.labels.openFolder", { name })}
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       whileHover={{ x: 2 }}
       transition={{ type: "spring", stiffness: 300, damping: 30 }}
     >
@@ -599,7 +611,7 @@ export function FolderListItem({
         {isProcessing ? (
           <p className="text-xs text-blue-400 flex items-center gap-1">
             <Loader2 className="size-3 animate-spin" />
-            Processing {processingCount} file{processingCount > 1 ? 's' : ''}...
+            {t("interactiveFolder.processingFiles", { count: processingCount })}
           </p>
         ) : description ? (
           <p className="text-xs text-muted-foreground truncate">
@@ -625,7 +637,9 @@ export function FolderListItem({
         </Badge>
       ) : (
         <Badge variant="secondary" className="shrink-0 text-[10px] px-1.5 py-0">
-          {quizCount === 0 ? "Empty" : `${quizCount} docs`}
+          {quizCount === 0
+            ? t("interactiveFolder.empty")
+            : t("interactiveFolder.docs", { count: quizCount })}
         </Badge>
       )}
       {description && (
@@ -644,6 +658,13 @@ export function FolderListItem({
                 ? "text-yellow-400"
                 : "text-muted-foreground hover:text-yellow-400 hover:bg-muted",
             )}
+            aria-label={t(
+              isFavorite
+                ? "a11y.labels.removeFavorite"
+                : "a11y.labels.addFavorite",
+              { name },
+            )}
+            aria-pressed={isFavorite}
             onClick={(e) => {
               e.stopPropagation();
               onToggleFavorite();
@@ -655,6 +676,7 @@ export function FolderListItem({
         {onEdit && (
           <button
             className="size-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            aria-label={t("a11y.labels.editFolder", { name })}
             onClick={(e) => {
               e.stopPropagation();
               onEdit();
@@ -663,33 +685,21 @@ export function FolderListItem({
             <Pencil className="size-3.5" />
           </button>
         )}
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <button
-              className="size-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <Trash2 className="size-3.5" />
-            </button>
-          </AlertDialogTrigger>
-          <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Xóa thư mục "{name}"?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Thao tác này sẽ xóa vĩnh viễn thư mục và toàn bộ tài liệu bên trong. Bạn không thể hoàn tác.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Hủy</AlertDialogCancel>
-              <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                onClick={onDelete}
-              >
-                Xóa
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <ConfirmDialog
+          stopPropagation
+          destructive
+          title={t("confirm.deleteFolder.title", { name })}
+          description={t("confirm.deleteFolder.desc")}
+          confirmLabel={t("common.delete")}
+          onConfirm={onDelete}
+        >
+          <button
+            className="size-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+            aria-label={t("a11y.labels.deleteFolder", { name })}
+          >
+            <Trash2 className="size-3.5" />
+          </button>
+        </ConfirmDialog>
       </div>
     </motion.div>
   );
@@ -698,10 +708,11 @@ export function FolderListItem({
 // ─── Create Folder Card ──────────────────────────────────────────────────────
 
 export function CreateFolderCard({ onClick }: { onClick: () => void }) {
+  const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const [displayedText, setDisplayedText] = useState("");
   const [isTypingComplete, setIsTypingComplete] = useState(false);
-  const fullText = "Click to start...";
+  const fullText = t("interactiveFolder.clickToStart");
 
   useEffect(() => {
     if (isHovered) {
@@ -722,14 +733,25 @@ export function CreateFolderCard({ onClick }: { onClick: () => void }) {
       setDisplayedText("");
       setIsTypingComplete(false);
     }
-  }, [isHovered]);
+  }, [isHovered, fullText]);
 
   return (
     <div
-      className="relative cursor-pointer select-none"
+      className="relative cursor-pointer select-none rounded-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      role="button"
+      tabIndex={0}
+      aria-label={t("home.createFolderNew")}
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      onFocus={() => setIsHovered(true)}
+      onBlur={() => setIsHovered(false)}
     >
       <style>{`
         @keyframes folder-cursor-blink {
