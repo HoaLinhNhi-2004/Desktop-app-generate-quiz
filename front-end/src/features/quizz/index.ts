@@ -40,4 +40,8 @@ export type {
   QuizDraft,
 } from "./hooks";
 export { QuizStreamProvider, useQuizStreamContext } from "./context";
-export { getQuestionIssues } from "./validation";
+export {
+  getQuestionIssues,
+  isAnswerCorrect,
+  normalizeAnswerText,
+} from "./validation";

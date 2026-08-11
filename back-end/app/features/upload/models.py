@@ -3,6 +3,7 @@ Upload feature - SQLAlchemy model for tracking uploaded files per folder.
 """
 from datetime import datetime, timezone
 from app.db import db
+from app.features.quizz.question_patterns import QUESTION_BANK_THRESHOLD
 
 
 class UploadedFileRecord(db.Model):
@@ -33,6 +34,8 @@ class UploadedFileRecord(db.Model):
     processing_status = db.Column(db.String(16), default="pending")  # pending | processing | completed | failed
     processing_error = db.Column(db.Text, nullable=True)
     chunk_count = db.Column(db.Integer, default=0)
+    # 0..1 heuristic that this material already contains quiz questions.
+    question_bank_score = db.Column(db.Float, default=0.0)
 
     folder = db.relationship("Folder", backref=db.backref("uploaded_files", cascade="all, delete-orphan"))
 
@@ -62,4 +65,8 @@ class UploadedFileRecord(db.Model):
             "processingStatus": self.processing_status or "pending",
             "processingError": self.processing_error,
             "chunkCount": self.chunk_count or 0,
+            "questionBankScore": float(self.question_bank_score or 0.0),
+            # Derived here so the threshold lives in one place instead of being
+            # duplicated as a magic number in the UI.
+            "isQuestionBank": float(self.question_bank_score or 0.0) >= QUESTION_BANK_THRESHOLD,
         }

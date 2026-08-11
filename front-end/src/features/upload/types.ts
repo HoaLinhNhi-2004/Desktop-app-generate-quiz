@@ -91,4 +91,8 @@ export interface UploadRecord {
   processingStatus: "pending" | "processing" | "completed" | "failed";
   processingError: string | null;
   chunkCount: number;
+  /** 0..1 heuristic that this material already contains quiz questions. */
+  questionBankScore: number;
+  /** Backend-side verdict on `questionBankScore` — the threshold lives there. */
+  isQuestionBank: boolean;
 }

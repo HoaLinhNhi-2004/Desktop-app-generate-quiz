@@ -41,6 +41,9 @@ export interface GenerateQuizOptions {
   folderId?: string;
   reusedFileIds?: string[];
   action?: "generate" | "import";
+  /** Import only: generate the shortfall when the document holds fewer questions
+   *  than `config.numberOfQuestions`. */
+  topUp?: boolean;
 }
 
 function _appendConfig(formData: FormData, config: QuizConfig) {
@@ -63,11 +66,13 @@ function _buildGenerateFormData(
     folderId,
     reusedFileIds,
     action = "generate",
+    topUp = false,
   } = options;
   const formData = new FormData();
 
   formData.append("inputType", inputMode);
   formData.append("action", action);
+  formData.append("topUp", topUp ? "1" : "0");
   if (folderId) formData.append("folderId", folderId);
   _appendConfig(formData, config);
 

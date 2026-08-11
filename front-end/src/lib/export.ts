@@ -31,7 +31,17 @@ export async function exportQuizToDocx(
       }),
     );
 
-    // Options
+    // Options — a short-answer has none, so leave a ruled line to write on
+    if (q.type === "short-answer") {
+      children.push(
+        new Paragraph({
+          children: [new TextRun({ text: i18n.t("export.shortAnswerLine") })],
+          indent: { left: 720 },
+          spacing: { after: 120 },
+        }),
+      );
+      return;
+    }
     q.options.forEach((opt, optIdx) => {
       const letter = String.fromCharCode(65 + optIdx); // A, B, C, D
       children.push(
@@ -61,7 +71,9 @@ export async function exportQuizToDocx(
 
     questions.forEach((q, i) => {
       let letter: string;
-      if (q.type === "multiple-answer" && q.correctAnswerIds?.length) {
+      if (q.type === "short-answer") {
+        letter = q.options[0]?.text || "—";
+      } else if (q.type === "multiple-answer" && q.correctAnswerIds?.length) {
         letter = q.correctAnswerIds
           .map((cid) => {
             const idx = q.options.findIndex((o) => o.id === cid);
@@ -137,9 +149,17 @@ export async function exportQuizToDocx(
  * - Question max 120 chars, Answer max 75 chars
  * - Time limit: 5,10,20,30,60,90,120,240
  * - Correct answer(s): comma-separated 1-indexed (e.g. "1,3")
+ *
+ * Returns how many questions were dropped: the format has no free-text answer,
+ * and exporting a short-answer as a one-option MCQ produces a Kahoot game where
+ * the answer is the only thing on screen.
  */
-export function exportQuizToKahoot(questions: QuizQuestion[], timeLimit = 30) {
-  const rows = questions.map((q) => {
+export function exportQuizToKahoot(
+  questions: QuizQuestion[],
+  timeLimit = 30,
+): { skipped: number } {
+  const exportable = questions.filter((q) => q.type !== "short-answer");
+  const rows = exportable.map((q) => {
     // Determine correct answer indices (1-based)
     let correctIndices: number[];
     if (q.type === "multiple-answer" && q.correctAnswerIds?.length) {
@@ -166,4 +186,5 @@ export function exportQuizToKahoot(questions: QuizQuestion[], timeLimit = 30) {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Kahoot");
   XLSX.writeFile(wb, "kahoot_quiz.xlsx");
+  return { skipped: questions.length - exportable.length };
 }

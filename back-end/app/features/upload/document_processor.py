@@ -62,6 +62,11 @@ def process_record(record_id: str, emit=_noop) -> None:
             _emit("error", {"message": record.processing_error})
             return
 
+        # Scored on the RAW text: filter_boilerplate is about to delete the very
+        # lines this looks for (repeated `A. Đúng` options, the `ĐÁP ÁN` heading).
+        from app.features.quizz.question_patterns import score_question_bank
+        record.question_bank_score = score_question_bank(text)
+
         # Step 2: Filter boilerplate, clean, and chunk
         from app.features.quizz.text_processing import filter_boilerplate, clean_text, chunk_text
 

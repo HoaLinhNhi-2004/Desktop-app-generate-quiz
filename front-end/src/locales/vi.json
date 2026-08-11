@@ -221,7 +221,12 @@
     "false": "Sai",
     "correctLabel": "Đáp án đúng",
     "wrongLabel": "Sai",
-    "explanationLabel": "Giải thích:"
+    "explanationLabel": "Giải thích:",
+    "typeShortAnswer": "Tự luận",
+    "shortAnswerPlaceholder": "Nhập câu trả lời của bạn…",
+    "modelAnswer": "Đáp án mẫu:",
+    "noModelAnswer": "Tài liệu gốc không có đáp án mẫu cho câu này.",
+    "originExtracted": "Trích từ tài liệu"
   },
   "quizConfig": {
     "questionCount": "Số lượng câu hỏi",
@@ -232,7 +237,8 @@
       "multiple-answer": "Chọn nhiều đáp án",
       "true-false": "Đúng / Sai",
       "fill-blank": "Điền vào chỗ trống",
-      "mixed": "Hỗn hợp"
+      "mixed": "Hỗn hợp",
+      "short-answer": "Tự luận"
     },
     "difficulty": "Độ khó",
     "difficulties": {
@@ -371,7 +377,8 @@
     "emptyHint": "Vào tab 'Tài liệu' để tải lên tài liệu trước",
     "processingCount": "Đang xử lý ({{count}})",
     "processingStatus": "Đang xử lý...",
-    "pendingStatus": "Chờ xử lý"
+    "pendingStatus": "Chờ xử lý",
+    "questionBankBadge": "Đề thi"
   },
   "uploadHistory": {
     "deleteSuccess": "Đã xóa",
@@ -403,7 +410,9 @@
     "answerKey": "ĐÁP ÁN",
     "explanation": "Giải thích: ",
     "success": "Đã xuất file",
-    "failed": "Xuất file thất bại"
+    "failed": "Xuất file thất bại",
+    "shortAnswerLine": "Trả lời: ..................................................",
+    "kahootSkippedShortAnswer": "Đã bỏ qua {{count}} câu tự luận — Kahoot không hỗ trợ câu trả lời tự do."
   },
   "pdfViewer": {
     "pageLabel": "Trang:",
@@ -1126,7 +1135,9 @@
       "empty-option": "Có đáp án bỏ trống.",
       "no-correct-answer": "Chưa chọn đáp án đúng.",
       "true-false-option-count": "Câu Đúng/Sai phải có đúng 2 đáp án."
-    }
+    },
+    "modelAnswerLabel": "Đáp án mẫu",
+    "modelAnswerPlaceholder": "Đáp án dùng để chấm câu tự luận"
   },
   "smartImportQuiz": {
     "modeGenerate": "Tạo từ tài liệu",
@@ -1135,7 +1146,12 @@
     "importReadyTitle": "Tài liệu đề thi",
     "importReadyDesc": "Chọn file chứa đề thi bên trái, AI sẽ tự động trích xuất tất cả câu hỏi và đáp án.",
     "importing": "Đang trích xuất...",
-    "importBtn": "Trích xuất câu hỏi"
+    "importBtn": "Trích xuất câu hỏi",
+    "detectedHint": "Tài liệu bạn chọn có sẵn câu hỏi.",
+    "detectedSwitch": "Chuyển sang Trích xuất",
+    "topUpLabel": "Sinh bù cho đủ số câu",
+    "topUpHint": "Nếu tài liệu ít câu hơn mong muốn, AI sẽ sinh thêm từ phần nội dung còn lại.",
+    "topUpCount": "Số câu mong muốn"
   },
   "spreadsheetViewer": {
     "title": "Bảng tính nguồn",

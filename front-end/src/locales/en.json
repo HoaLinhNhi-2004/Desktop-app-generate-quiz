@@ -221,7 +221,12 @@
     "false": "False",
     "correctLabel": "Correct answer",
     "wrongLabel": "Wrong",
-    "explanationLabel": "Explanation:"
+    "explanationLabel": "Explanation:",
+    "typeShortAnswer": "Short answer",
+    "shortAnswerPlaceholder": "Type your answer…",
+    "modelAnswer": "Model answer:",
+    "noModelAnswer": "The source document gave no model answer for this question.",
+    "originExtracted": "From the document"
   },
   "quizConfig": {
     "questionCount": "Number of Questions",
@@ -232,7 +237,8 @@
       "multiple-answer": "Multiple answers",
       "true-false": "True / False",
       "fill-blank": "Fill in the blank",
-      "mixed": "Mixed"
+      "mixed": "Mixed",
+      "short-answer": "Short answer"
     },
     "difficulty": "Difficulty",
     "difficulties": {
@@ -371,7 +377,8 @@
     "emptyHint": "Go to 'Materials' tab to upload materials first",
     "processingCount": "Processing ({{count}})",
     "processingStatus": "Processing...",
-    "pendingStatus": "Pending"
+    "pendingStatus": "Pending",
+    "questionBankBadge": "Exam"
   },
   "uploadHistory": {
     "deleteSuccess": "Deleted",
@@ -403,7 +410,9 @@
     "answerKey": "ANSWER KEY",
     "explanation": "Explanation: ",
     "success": "File exported",
-    "failed": "Export failed"
+    "failed": "Export failed",
+    "shortAnswerLine": "Answer: ....................................................",
+    "kahootSkippedShortAnswer": "Skipped {{count}} short-answer question(s) — Kahoot has no free-text answers."
   },
   "pdfViewer": {
     "pageLabel": "Page:",
@@ -1126,7 +1135,9 @@
       "empty-option": "An option is left blank.",
       "no-correct-answer": "No correct answer selected.",
       "true-false-option-count": "True/False must have exactly 2 options."
-    }
+    },
+    "modelAnswerLabel": "Model answer",
+    "modelAnswerPlaceholder": "The answer used to grade this short-answer question"
   },
   "smartImportQuiz": {
     "modeGenerate": "Generate from materials",
@@ -1135,7 +1146,12 @@
     "importReadyTitle": "Q&A Document",
     "importReadyDesc": "Pick an exam file on the left and the AI will extract every question and answer from it.",
     "importing": "Extracting...",
-    "importBtn": "Extract questions"
+    "importBtn": "Extract questions",
+    "detectedHint": "The material you picked already contains questions.",
+    "detectedSwitch": "Switch to Extract",
+    "topUpLabel": "Top up to a target count",
+    "topUpHint": "If the document holds fewer questions than you want, the AI generates the rest from the remaining content.",
+    "topUpCount": "Target question count"
   },
   "spreadsheetViewer": {
     "title": "Source Spreadsheet",

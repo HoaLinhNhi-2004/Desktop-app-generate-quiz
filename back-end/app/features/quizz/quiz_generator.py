@@ -29,6 +29,13 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.features.llm import LlmCredential, generate_with_fallback, stream_with_fallback
+from app.features.quizz.question_patterns import (
+    INLINE_ANSWER_RE,
+    PAGE_MARKER_RE,
+    find_answer_key,
+    normalize_question_key,
+    split_on_question_boundaries,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +60,10 @@ _MAX_QUESTIONS_PER_CALL = 15
 
 # Import mode has no target count — this is only a runaway guard for the sink.
 _IMPORT_QUESTION_CAP = 500
+
+# Import chunks are packed with whole questions and no overlap, so they can be
+# much larger than generation chunks: extraction output is bounded by its input.
+_IMPORT_CHUNK_SIZE = 12_000       # chars
 
 # ---------------------------------------------------------------------------
 # Quiz Difficulty Engine Constants
@@ -350,6 +361,13 @@ class _StreamingArrayParser:
         return found
 
 
+def _exact_key(question: dict) -> str:
+    """Stem + options, numbering and whitespace normalised away — a literal-repeat key."""
+    parts = [question.get("questionText", "")]
+    parts += [opt.get("text", "") for opt in question.get("options") or []]
+    return normalize_question_key(" | ".join(parts))
+
+
 class _QuestionSink:
     """
     Thread-safe collector shared by the parallel chunk workers.
@@ -362,15 +380,19 @@ class _QuestionSink:
     what guarantees subscribers observe questionNumber 1, 2, 3, … in order.
     """
 
-    def __init__(self, limit: int, on_question, dedupe: bool = True) -> None:
+    def __init__(self, limit: int, on_question, dedupe_mode: str = "fuzzy") -> None:
         self._lock = threading.Lock()
         self._seen: list[str] = []
         self._accepted: list[dict] = []
         self._limit = limit
         self._on_question = on_question
-        # Mirror the non-streaming path: a single Gemini call was never deduped,
-        # only the multi-chunk and import merges were.
-        self._dedupe = dedupe
+        # "fuzzy" — generate mode, where two near-identical questions really are a
+        #   duplicate worth dropping.
+        # "exact" — import mode.  An exam paper is stem-templated by construction
+        #   ("…ở tầng 1" vs "…ở tầng 2" scores 0.977), so fuzzy matching here is a
+        #   silent mass-deletion machine.  Only literal repeats are dropped.
+        # "off"   — no check at all.
+        self._dedupe_mode = dedupe_mode
         self.quota_reached = threading.Event()
 
     @property
@@ -390,12 +412,17 @@ class _QuestionSink:
                 self.quota_reached.set()
                 return False
 
-            text = question.get("questionText", "").lower().strip()
-            if self._dedupe and any(
-                difflib.SequenceMatcher(None, text, seen).ratio() > 0.70
-                for seen in self._seen
-            ):
-                return False
+            if self._dedupe_mode == "exact":
+                text = _exact_key(question)
+                if text in self._seen:
+                    return False
+            else:
+                text = question.get("questionText", "").lower().strip()
+                if self._dedupe_mode == "fuzzy" and any(
+                    difflib.SequenceMatcher(None, text, seen).ratio() > 0.70
+                    for seen in self._seen
+                ):
+                    return False
 
             number = len(self._accepted) + 1
             question["questionNumber"] = number
@@ -740,7 +767,10 @@ def generate_quiz(
     """
 
     sink = (
-        _QuestionSink(num_questions, on_question, dedupe=len(text) > _SINGLE_CALL_THRESHOLD)
+        _QuestionSink(
+            num_questions, on_question,
+            dedupe_mode="fuzzy" if len(text) > _SINGLE_CALL_THRESHOLD else "off",
+        )
         if on_question else None
     )
 
@@ -888,48 +918,105 @@ def generate_quiz(
         raise RuntimeError(f"Failed to generate quiz: {str(e)}") from e
 
 
-def _build_import_prompt(text: str, language: str = "vi") -> str:
-    """
-    Build a specialized extraction prompt for Smart Quiz Import.
-    
-    Unlike _build_prompt(), this does NOT ask Gemini to create new questions.
-    Instead, it instructs Gemini to recognize and extract ALL existing Q&A
-    from the provided text, preserving them verbatim.
-    """
-    lang = "Vietnamese" if language == "vi" else "English"
-    
-    prompt = f"""Bạn là một chuyên gia nhận diện và trích xuất dữ liệu.
-Nhiệm vụ của bạn là đọc nội dung văn bản dưới đây, nhận diện TẤT CẢ các câu hỏi kèm theo câu trả lời (nếu có) và xuất chúng ra định dạng JSON.
-
-HƯỚNG DẪN QUAN TRỌNG:
-1. KHÔNG sáng tác hay tóm tắt nội dung. Hãy GIỮ NGUYÊN văn bản của câu hỏi và các đáp án.
-2. NHẬN DIỆN số lượng câu hỏi tùy ý. Bạn phải bóc tách TẤT CẢ câu hỏi có trong văn bản (không giới hạn 10 câu).
-3. SUY LUẬN đáp án đúng: Nếu trong văn bản đáp án đúng được làm nổi bật (bôi đậm, gạch dưới, có dấu *, hoặc nằm ở phần "Đáp án" cuối file), hãy tự động gán đáp án đúng vào id tương ứng. Nếu không thể suy luận được đáp án, hãy đánh dấu phần "correctAnswerId" là chuỗi rỗng "".
-4. Phân loại câu hỏi: Dựa vào cấu trúc, nếu câu có nhiều lựa chọn (A,B,C,D) hãy gán type = "multiple-choice". Nếu câu hỏi có 2 đáp án đúng trở lên, gán type = "multiple-answer" và dùng correctAnswerIds thay vì correctAnswerId.
-5. Output language: {lang}
-
-ĐẦU RA:
-Trả về duy nhất một mảng JSON tuân theo cấu trúc sau, không kèm giải thích hay markdown:
-[
-  {{
+_IMPORT_SCHEMA_BLOCK = """[
+  {
+    "sourceNumber": 1,
     "type": "multiple-choice",
-    "questionText": "Nội dung câu hỏi",
-    "options": [
-      {{"id": "a", "text": "Nội dung đáp án A"}},
-      {{"id": "b", "text": "Nội dung đáp án B"}},
-      {{"id": "c", "text": "Nội dung đáp án C"}},
-      {{"id": "d", "text": "Nội dung đáp án D"}}
-    ],
+    "questionText": "...",
+    "options": [{"id": "a", "text": "..."}, {"id": "b", "text": "..."}],
     "correctAnswerId": "a",
-    "explanation": "Câu giải thích nếu có trong bài"
-  }}
-]
+    "explanation": "",
+    "sourcePages": [3],
+    "sourceKeyword": ["..."]
+  }
+]"""
 
-Nội dung văn bản gốc:
+
+def _build_import_prompt(
+    text: str,
+    language: str = "vi",
+    *,
+    chunk_label: str = "",
+    answer_key: str = "",
+) -> str:
+    """
+    Extraction prompt for Smart Quiz Import.
+
+    Unlike `_build_prompt`, this must never author a question — it recognises and
+    copies out the ones the document already contains.  The answer key, when the
+    document has one, is appended to *every* chunk: it lives at the end of the file
+    and would otherwise sit in a different parallel call than the questions it
+    answers.  A 200-question key is ~500 input tokens, which is nothing next to
+    losing every answer.
+    """
+    if language == "vi":
+        key_block = (
+            f"\n\n## BẢNG ĐÁP ÁN (tra theo sourceNumber)\n---------\n{answer_key}\n---------"
+            if answer_key else ""
+        )
+        return f"""Bạn là công cụ TRÍCH XUẤT dữ liệu, không phải công cụ sáng tác.
+Nhiệm vụ: đọc đoạn văn bản dưới đây và bóc tách NGUYÊN VĂN mọi câu hỏi có sẵn trong đó.
+
+QUY TẮC BẮT BUỘC
+1. GIỮ NGUYÊN 100% văn bản gốc của câu hỏi và từng đáp án — không sửa lỗi chính tả, không rút gọn, không diễn giải lại, không dịch.
+2. TUYỆT ĐỐI KHÔNG tự nghĩ ra câu hỏi mới. Nếu đoạn này không chứa câu hỏi nào, trả về đúng một mảng rỗng: []
+3. Bóc tách TẤT CẢ câu hỏi trong đoạn — không giới hạn số lượng, không bỏ câu nào, kể cả khi hai câu gần giống hệt nhau (đề thi thường lặp cấu trúc, đó là bình thường).
+4. Câu hỏi nào có số thứ tự gốc (Câu N) thì ghi đúng số đó vào "sourceNumber".
+5. Xác định đáp án đúng theo thứ tự ưu tiên:
+   a) BẢNG ĐÁP ÁN ở cuối prompt (nếu có) — tra theo sourceNumber;
+   b) dòng "Đáp án: X" ngay dưới câu hỏi;
+   c) đáp án được đánh dấu (in đậm **…**, dấu *, gạch chân, ✓).
+   Không suy được thì để "correctAnswerId": "" — KHÔNG đoán bừa.
+6. Phân loại "type":
+   - từ 2 lựa chọn trở lên, 1 đáp án đúng           → "multiple-choice"
+   - từ 2 đáp án đúng trở lên                        → "multiple-answer" (dùng "correctAnswerIds")
+   - đúng 2 lựa chọn Đúng/Sai                        → "true-false"
+   - có chỗ trống ___ và CÓ lựa chọn                 → "fill-blank"
+   - KHÔNG có lựa chọn nào (tự luận, điền từ tự do)  → "short-answer", "options" là [] hoặc [{{"id":"a","text":"<đáp án mẫu nếu tài liệu có>"}}]
+7. "sourcePages": số trang lấy từ các dòng đánh dấu "--- TRANG N ---". Không có thì để [].
+8. "sourceKeyword": 1-3 cụm 3-8 từ COPY NGUYÊN VĂN từ đoạn chứa câu hỏi. Không diễn giải lại.
+
+ĐẦU RA: chỉ một mảng JSON, không markdown, không giải thích.
+{_IMPORT_SCHEMA_BLOCK}
+
+{chunk_label}VĂN BẢN GỐC:
 ---------
 {text}
----------"""
-    return prompt
+---------{key_block}"""
+
+    key_block = (
+        f"\n\n## ANSWER KEY (look up by sourceNumber)\n---------\n{answer_key}\n---------"
+        if answer_key else ""
+    )
+    return f"""You are a data EXTRACTION tool, not an authoring tool.
+Task: read the text below and copy out, VERBATIM, every question it already contains.
+
+MANDATORY RULES
+1. Preserve the original wording of the question and of every option 100% — do not fix typos, shorten, rephrase or translate.
+2. NEVER invent a question. If this section contains none, return exactly an empty array: []
+3. Extract EVERY question in the section — no limit, none skipped, even when two are nearly identical (exam papers reuse stems and that is expected).
+4. When a question carries an original number (Question N), put that number in "sourceNumber".
+5. Determine the correct answer in this order of priority:
+   a) the ANSWER KEY at the end of this prompt (if present) — look it up by sourceNumber;
+   b) an "Answer: X" line directly under the question;
+   c) an option marked up as correct (bold **…**, an asterisk, underline, ✓).
+   If none applies, leave "correctAnswerId": "" — do NOT guess.
+6. Classify "type":
+   - 2+ options, exactly one correct                → "multiple-choice"
+   - 2 or more correct options                      → "multiple-answer" (use "correctAnswerIds")
+   - exactly 2 True/False options                   → "true-false"
+   - has a ___ blank AND options                    → "fill-blank"
+   - NO options at all (essay, free-text blank)     → "short-answer", with "options" as [] or [{{"id":"a","text":"<model answer if the document gives one>"}}]
+7. "sourcePages": page numbers taken from the "--- TRANG N ---" marker lines. Use [] when absent.
+8. "sourceKeyword": 1-3 phrases of 3-8 words copied VERBATIM from the passage holding the question. Do not paraphrase.
+
+OUTPUT: a single JSON array only, no markdown, no commentary.
+{_IMPORT_SCHEMA_BLOCK}
+
+{chunk_label}SOURCE TEXT:
+---------
+{text}
+---------{key_block}"""
 
 
 def import_quiz_from_text(
@@ -947,102 +1034,147 @@ def import_quiz_from_text(
     It extracts and parses existing Q&A content from the source text.
 
     on_question(question, number) streams each extracted question as it arrives.
-    There is no target count in import mode, so the sink is effectively uncapped.
+    There is no target count in import mode, so the sink is capped only by
+    _IMPORT_QUESTION_CAP.
 
     Returns:
-        (questions, token_usage)
+        (questions, token_usage, leftover_text)
+
+    `leftover_text` is everything the document held that did NOT turn into a
+    question — a cover page, a lecture section, an item the model skipped.  It is
+    what the hybrid top-up generates from.
     """
 
-    sink = _QuestionSink(_IMPORT_QUESTION_CAP, on_question) if on_question else None
+    sink = _QuestionSink(_IMPORT_QUESTION_CAP, on_question, dedupe_mode="exact") if on_question else None
 
-    logger.info(
-        "import_quiz_from_text: %d chars | lang=%s",
-        len(text), language,
-    )
+    logger.info("import_quiz_from_text: %d chars | lang=%s", len(text), language)
 
     token_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "models": {}}
-    
+
     try:
-        # Split text into chunks if too long
-        chunks = _split_into_chunks(text, _MAX_CHUNK_SIZE)
-        
+        body, key_text, key_map = find_answer_key(text)
+        chunks, prelude = split_on_question_boundaries(body, _IMPORT_CHUNK_SIZE)
+
+        if not chunks:
+            # No recognisable "Câu N" structure.  Fall back to paragraph chunking
+            # and let the model find whatever question-shaped content is in there.
+            chunks = [
+                {"text": c, "items": []}
+                for c in _split_into_chunks(body, _MAX_CHUNK_SIZE)
+            ]
+            prelude = ""
+
         if len(chunks) > _MAX_PARALLEL_CHUNKS:
-            # Merge tail chunks
-            merged: list[str] = []
+            merged: list[dict] = []
             per = len(chunks) // _MAX_PARALLEL_CHUNKS
             for i in range(_MAX_PARALLEL_CHUNKS):
                 start = i * per
                 end = start + per if i < _MAX_PARALLEL_CHUNKS - 1 else len(chunks)
-                merged.append("\n\n".join(chunks[start:end]))
+                group = chunks[start:end]
+                merged.append({
+                    "text": "\n\n".join(c["text"] for c in group),
+                    "items": [it for c in group for it in c["items"]],
+                })
             chunks = merged
+
+        sources_by_number = {
+            it["number"]: it["text"] for chunk in chunks for it in chunk["items"]
+        }
+
+        # Fill the answer inside the validator rather than in a post-pass: streamed
+        # questions reach the browser straight from the sink, so a later fix would
+        # arrive after the user has already seen the question unanswered.
+        def _validate(q: dict) -> dict:
+            return _validate_import_question(q, key_map=key_map, sources=sources_by_number)
+
+        def _parse_all(raw_text: str) -> list[dict]:
+            return _parse_import_response(raw_text, validate=_validate)
 
         n = len(chunks)
         all_questions: list[dict] = []
 
-        logger.info("Import extraction: %d chunks, text=%d chars", n, len(text))
+        logger.info(
+            "Import extraction: %d chunks, body=%d chars, answer key=%s",
+            n, len(body), f"{len(key_map)} entries" if key_map else "none",
+        )
 
         _tok_lock = threading.Lock()
 
-        def _import_worker(idx: int, chunk: str) -> list[dict]:
-            logger.info("  Import chunk %d/%d: %d chars", idx + 1, n, len(chunk))
-            prompt = _build_import_prompt(chunk, language)
-            max_tok = 65_536  # generous for extraction
-            
-            _save_debug_file(
-                f"import_prompt_chunk{idx+1}of{n}",
-                prompt,
-                meta=f"# Import chunk {idx+1}/{n} | lang={language} | chars={len(chunk)}",
+        def _account(model_used: str, tok: dict) -> None:
+            in_tok = tok.get("input_tokens", 0)
+            out_tok = tok.get("output_tokens", 0)
+            with _tok_lock:
+                token_usage["input_tokens"] += in_tok
+                token_usage["output_tokens"] += out_tok
+                stats = token_usage["models"].setdefault(
+                    model_used, {"requests": 0, "input_tokens": 0, "output_tokens": 0},
+                )
+                stats["requests"] += 1
+                stats["input_tokens"] += in_tok
+                stats["output_tokens"] += out_tok
+
+        def _import_call(label: str, chunk: dict, max_tok: int, depth: int) -> list[dict]:
+            numbers = [it["number"] for it in chunk["items"]]
+            chunk_label = (
+                f"[Đoạn này chứa các câu số: {', '.join(str(x) for x in numbers)}]\n"
+                if numbers and language == "vi" else
+                f"[This section holds question numbers: {', '.join(str(x) for x in numbers)}]\n"
+                if numbers else ""
             )
-            
-            for attempt in range(3):
-                try:
-                    qs, model_used, tok, raw, parse_err = _run_chunk_call(
-                        prompt, cred, max_tok, "multiple-choice",
-                        sink, on_notice,
-                        validate=_validate_import_question,
-                        parse_all=_parse_import_response,
-                    )
-                    in_tok = tok.get("input_tokens", 0)
-                    out_tok = tok.get("output_tokens", 0)
-                    with _tok_lock:
-                        token_usage["input_tokens"] += in_tok
-                        token_usage["output_tokens"] += out_tok
-                        if model_used not in token_usage["models"]:
-                            token_usage["models"][model_used] = {"requests": 0, "input_tokens": 0, "output_tokens": 0}
-                        token_usage["models"][model_used]["requests"] += 1
-                        token_usage["models"][model_used]["input_tokens"] += in_tok
-                        token_usage["models"][model_used]["output_tokens"] += out_tok
+            prompt = _build_import_prompt(
+                chunk["text"], language, chunk_label=chunk_label, answer_key=key_text,
+            )
+            _save_debug_file(
+                f"import_prompt_{label}",
+                prompt,
+                meta=f"# Import {label} | lang={language} | chars={len(chunk['text'])} | items={len(numbers)}",
+            )
 
-                    _save_debug_file(
-                        f"import_response_chunk{idx+1}of{n}",
-                        raw,
-                        meta=f"# Import chunk {idx+1}/{n} | model={model_used} | attempt={attempt + 1}",
-                    )
+            qs, model_used, tok, raw, parse_err = _run_chunk_call(
+                prompt, cred, max_tok, "multiple-choice",
+                sink, on_notice, validate=_validate, parse_all=_parse_all,
+            )
+            _account(model_used, tok)
+            _save_debug_file(
+                f"import_response_{label}",
+                raw,
+                meta=f"# Import {label} | model={model_used} | depth={depth}",
+            )
 
-                    if parse_err is not None:
-                        raise parse_err
-                    logger.info(
-                        "  Import chunk %d/%d: got %d questions via %s",
-                        idx + 1, n, len(qs), model_used,
+            if parse_err is None:
+                logger.info("  Import %s: got %d questions via %s", label, len(qs), model_used)
+                return qs
+
+            # A retry with the identical prompt and budget fails identically, so
+            # halve the work instead — mirroring _shrink_and_rebuild on the
+            # generate side.  Depth 2 caps this at 4 sub-calls per chunk.
+            logger.warning("  Import %s: parse error (depth %d): %s", label, depth, parse_err)
+            if depth >= 2:
+                return []
+            if len(chunk["items"]) >= 2:
+                mid = len(chunk["items"]) // 2
+                halves = [chunk["items"][:mid], chunk["items"][mid:]]
+                out: list[dict] = []
+                for half_idx, items in enumerate(halves):
+                    out += _import_call(
+                        f"{label}_{half_idx + 1}",
+                        {"text": "\n\n".join(i["text"] for i in items), "items": items},
+                        max_tok, depth + 1,
                     )
-                    return qs
-                except (ValueError, Exception) as e:
-                    if attempt < 2:
-                        logger.warning(
-                            "  Import chunk %d/%d: parse error (attempt %d/3): %s",
-                            idx + 1, n, attempt + 1, e,
-                        )
-                    else:
-                        logger.error(
-                            "  Import chunk %d/%d: failed after 3 attempts: %s",
-                            idx + 1, n, e,
-                        )
-            return []
+                return out
+            return _import_call(label, chunk, max(8_192, max_tok // 2), depth + 1)
+
+        def _import_worker(idx: int, chunk: dict) -> list[dict]:
+            logger.info("  Import chunk %d/%d: %d chars", idx + 1, n, len(chunk["text"]))
+            try:
+                return _import_call(f"chunk{idx+1}of{n}", chunk, 65_536, 0)
+            except Exception as e:
+                logger.error("  Import chunk %d/%d failed: %s", idx + 1, n, e)
+                return []
 
         if n == 1:
             all_questions = _import_worker(0, chunks[0])
         else:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
             with ThreadPoolExecutor(max_workers=min(n, _MAX_PARALLEL_CHUNKS)) as pool:
                 futures = {pool.submit(_import_worker, i, chunk): i for i, chunk in enumerate(chunks)}
                 chunk_results: dict[int, list[dict]] = {}
@@ -1058,33 +1190,62 @@ def import_quiz_from_text(
 
         if sink is not None:
             # Streaming already deduped and numbered each question on arrival.
-            deduped = sink.snapshot()
+            questions = sink.snapshot()
         else:
-            deduped = _deduplicate_questions(all_questions)
-            for i, q in enumerate(deduped):
+            questions = _dedupe_exact(all_questions)[:_IMPORT_QUESTION_CAP]
+            for i, q in enumerate(questions):
                 q["id"] = f"q{i+1}_{uuid.uuid4().hex[:6]}"
                 q["questionNumber"] = i + 1
 
+        covered = {q.get("sourceNumber") for q in questions}
+        leftover = "\n\n".join(
+            [prelude]
+            + [
+                it["text"]
+                for chunk in chunks for it in chunk["items"]
+                if it["number"] not in covered
+            ]
+        ).strip()
+
+        for q in questions:
+            q.pop("sourceNumber", None)
+
         token_usage["total_tokens"] = token_usage["input_tokens"] + token_usage["output_tokens"]
-        
+
         logger.info(
-            "Import: extracted %d questions (after dedup=%d) | tokens: in=%d out=%d",
-            len(all_questions), len(deduped),
+            "Import: %d raw → %d kept | leftover=%d chars | tokens: in=%d out=%d",
+            len(all_questions), len(questions), len(leftover),
             token_usage["input_tokens"], token_usage["output_tokens"],
         )
-        return deduped, token_usage
+        return questions, token_usage, leftover
 
     except Exception as e:
         logger.error("Quiz import error: %s", e)
         raise RuntimeError(f"Failed to import quiz: {str(e)}") from e
 
 
-def _parse_import_response(raw_text: str) -> list[dict]:
+def _dedupe_exact(questions: list[dict]) -> list[dict]:
+    """Drop literal repeats only — see `_QuestionSink` for why fuzzy is wrong here."""
+    seen: set[str] = set()
+    out: list[dict] = []
+    for q in questions:
+        key = _exact_key(q)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(q)
+    return out
+
+
+def _parse_import_response(raw_text: str, validate=None) -> list[dict]:
     """
-    Parse Gemini response for import mode.
+    Parse the model's response for import mode.
     More lenient than _parse_response — accepts questions without correctAnswerId
     (sets it to empty string if missing).
     """
+    if validate is None:
+        validate = _validate_import_question
+
     # Strip markdown code fences
     cleaned = re.sub(r"```(?:json)?\s*", "", raw_text).strip()
     cleaned = re.sub(r"```\s*$", "", cleaned).strip()
@@ -1129,8 +1290,7 @@ def _parse_import_response(raw_text: str) -> list[dict]:
     validated = []
     for q in questions:
         try:
-            vq = _validate_import_question(q)
-            validated.append(vq)
+            validated.append(validate(q))
         except Exception as e:
             logger.warning("Skipping invalid imported question: %s", e)
             continue
@@ -1138,45 +1298,61 @@ def _parse_import_response(raw_text: str) -> list[dict]:
     return validated
 
 
-def _validate_import_question(q: dict) -> dict:
+def _validate_import_question(q: dict, *, key_map=None, sources=None) -> dict:
     """
     Validate a single imported question. More lenient than _validate_question:
     - correctAnswerId can be empty (unknown answer)
     - Does not check for ambiguous options
+    - A question with no options is kept as `short-answer` instead of being
+      dropped.  Real exam papers are full of essay and free-text items, and
+      silently deleting them was losing content the user can see in their file.
+
+    `key_map` (question number → option letter) and `sources` (question number →
+    the original text of that item) let an unanswered question be resolved from
+    the document's own answer key before it ever reaches the caller.
     """
     if "questionText" not in q or not q["questionText"]:
         raise ValueError("Missing questionText")
-    
-    options = q.get("options", [])
-    if not isinstance(options, list) or len(options) < 2:
-        raise ValueError("Options must have at least 2 items")
 
-    # Normalize option IDs
+    options = q.get("options")
+    if not isinstance(options, list):
+        options = []
+
+    normalized = []
     for opt in options:
-        if "id" not in opt or "text" not in opt:
+        if not isinstance(opt, dict) or "id" not in opt or "text" not in opt:
             raise ValueError("Each option must have 'id' and 'text'")
-        opt["id"] = str(opt["id"]).lower()
-
+        normalized.append({"id": str(opt["id"]).lower(), "text": opt["text"]})
+    options = normalized
     option_ids = [opt["id"] for opt in options]
 
     q_type = q.get("type", "multiple-choice")
-    if q_type not in ("multiple-choice", "multiple-answer", "true-false", "fill-blank"):
+    if q_type not in ("multiple-choice", "multiple-answer", "true-false", "fill-blank", "short-answer"):
         q_type = "multiple-choice"
+    if len(options) < 2 and q_type != "short-answer":
+        # One option is how a short-answer carries its model answer; zero means
+        # the document gave none.  Either way it is not a choice question.
+        q_type = "short-answer"
 
-    # Handle correctAnswerId — can be empty for import mode
     correct_id = str(q.get("correctAnswerId", "")).lower().strip()
     correct_ids = []
-    
+
     if q_type == "multiple-answer":
         raw_ids = q.get("correctAnswerIds", [])
         if isinstance(raw_ids, str):
             raw_ids = [raw_ids]
         correct_ids = [str(cid).lower() for cid in raw_ids if cid]
         correct_id = correct_ids[0] if correct_ids else ""
-    else:
-        # Validate correctAnswerId if present
-        if correct_id and correct_id not in option_ids:
-            correct_id = ""  # Reset if invalid
+    elif q_type == "short-answer":
+        correct_id = options[0]["id"] if options else ""
+    elif correct_id and correct_id not in option_ids:
+        correct_id = ""
+
+    source_number = q.get("sourceNumber")
+    source_number = source_number if isinstance(source_number, int) else None
+
+    if not correct_id and q_type in ("multiple-choice", "true-false", "fill-blank"):
+        correct_id = _answer_from_document(source_number, option_ids, key_map, sources)
 
     result = {
         "type": q_type,
@@ -1184,13 +1360,55 @@ def _validate_import_question(q: dict) -> dict:
         "options": options,
         "correctAnswerId": correct_id,
         "explanation": q.get("explanation", ""),
-        "sourcePages": [],
-        "sourceKeyword": [],
+        "sourcePages": _clean_source_pages(q.get("sourcePages")),
+        "sourceKeyword": _clean_source_keyword(q.get("sourceKeyword")),
+        "origin": "extracted",
     }
+    if source_number is not None:
+        result["sourceNumber"] = source_number
     if q_type == "multiple-answer" and correct_ids:
         result["correctAnswerIds"] = correct_ids
-    
+
     return result
+
+
+def _answer_from_document(
+    source_number: int | None, option_ids: list[str], key_map, sources,
+) -> str:
+    """Resolve an unanswered question from the document's answer key, then from
+    an "Đáp án: X" line inside the question itself.  Returns "" when neither
+    applies — an unanswered question is honest, a guessed one is not."""
+    if source_number is None or not option_ids:
+        return ""
+
+    letter = (key_map or {}).get(source_number)
+    if letter is None and sources:
+        match = INLINE_ANSWER_RE.search(sources.get(source_number, ""))
+        if match:
+            letter = re.split(r"[,/]", match.group(1))[0].strip().lower()
+
+    if not letter:
+        return ""
+    if letter in option_ids:
+        return letter
+    # A true-false key writes Đ/S rather than a/b.
+    if letter in ("đ", "s") and len(option_ids) == 2:
+        return option_ids[0 if letter == "đ" else 1]
+    return ""
+
+
+def _clean_source_pages(value) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    return [int(p) for p in value if isinstance(p, (int, float)) and int(p) > 0][:10]
+
+
+def _clean_source_keyword(value) -> list[str]:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    return [str(k).strip() for k in value if str(k).strip()][:5]
 
 
 def _build_prompt(
@@ -1373,7 +1591,10 @@ def _validate_question(q: dict, default_type: str) -> dict:
     """Validate a single question dict"""
     # Normalize type first so we can do type-specific field checks
     q_type = q.get("type", default_type)
-    if q_type not in ("multiple-choice", "multiple-answer", "true-false", "fill-blank"):
+    # "short-answer" is import-only — generation never asks for it — but a quiz set
+    # can be re-validated after editing, and coercing it here would silently turn a
+    # user's essay question into a broken multiple-choice.
+    if q_type not in ("multiple-choice", "multiple-answer", "true-false", "fill-blank", "short-answer"):
         q_type = default_type
 
     # Required fields vary by type

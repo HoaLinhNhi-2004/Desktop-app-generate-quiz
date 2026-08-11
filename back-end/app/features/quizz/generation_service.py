@@ -276,6 +276,110 @@ def extract_combined_text(
     return "\n\n".join(all_texts)
 
 
+def extract_verbatim_text(
+    payload: dict,
+    saved_paths: list,
+    config: dict,
+    emit=_noop,
+) -> str:
+    """
+    Source text for import mode, kept as close to the original document as possible.
+
+    Import cannot reuse the vector-store chunks the way generation does.  Those
+    chunks are a lossy projection built for embedding retrieval — boilerplate
+    stripped, 1 000-char windows — and that projection deletes exactly the signals
+    an exam paper is made of: repeated option lines (`A. Đúng` / `B. Sai`), the `*`
+    marking a correct answer, and the answer-key section at the end.
+
+    It also differs from `extract_combined_text` in dispatching on the record's
+    `input_mode` rather than on the file extension, so pasted-text, YouTube, web and
+    Notion materials contribute their real content instead of being skipped for
+    having no file on disk.
+    """
+    ocr_lang = config["language"]
+    reused_ids = payload.get("reusedFileIds") or []
+
+    parts: list[str] = []
+    page_offset = 0
+
+    def add_pdf(path: str) -> None:
+        nonlocal page_offset
+        from app.features.quizz.pdf_service import extract_text_from_pdf_paged
+        paged_text, n_pages = extract_text_from_pdf_paged(path, lang=ocr_lang)
+        if not paged_text.strip():
+            return
+        if page_offset > 0:
+            for p in range(n_pages, 0, -1):
+                paged_text = paged_text.replace(
+                    f"--- TRANG {p} ---",
+                    f"--- TRANG {p + page_offset} ---",
+                )
+        page_offset += n_pages
+        parts.append(paged_text)
+
+    def add_path(path: str) -> None:
+        if path.rsplit(".", 1)[-1].lower() == "pdf":
+            add_pdf(path)
+        else:
+            text = extract_text_from_file(path, lang=ocr_lang)
+            if text.strip():
+                parts.append(text)
+
+    total = len(saved_paths) + len(reused_ids)
+    step = 0
+
+    for path in saved_paths:
+        step += 1
+        emit("stage", {
+            "stage": "extracting",
+            "detail": os.path.basename(path),
+            "current": step,
+            "total": total,
+        })
+        add_path(path)
+
+    for record_id in reused_ids:
+        step += 1
+        record = UploadedFileRecord.query.get(record_id)
+        if record is None:
+            logger.warning("Import: reused record %s not found", record_id)
+            continue
+
+        emit("stage", {
+            "stage": "extracting",
+            "detail": record.original_name,
+            "current": step,
+            "total": total,
+        })
+
+        mode = record.input_mode or "files"
+        if mode in ("files", "gdrive"):
+            if record.stored_path and os.path.isfile(record.stored_path):
+                add_path(record.stored_path)
+            else:
+                logger.warning("Import: file missing on disk for record %s", record_id)
+            continue
+
+        try:
+            from app.features.upload.document_processor import _extract_text
+            text = _extract_text(record)
+        except Exception as exc:
+            # A transcript or a page behind a login can stop being reachable long
+            # after it was first ingested.  Degraded chunks beat an empty import.
+            logger.warning("Import: re-fetch failed for %s (%s) — %s",
+                           record_id, mode, exc)
+            from app.features.upload.vector_store import get_record_chunks
+            text = "\n\n".join(get_record_chunks(record_id))
+            if text.strip():
+                emit("notice", {"code": "importDegradedSource",
+                                "source": record.original_name})
+
+        if text.strip():
+            parts.append(text)
+
+    return "\n\n".join(parts)
+
+
 # ── Payload ───────────────────────────────────────────────────────────────────
 
 
@@ -295,6 +399,7 @@ def build_payload(
     return {
         "inputType": (form.get("inputType") or "files").strip().lower(),
         "action": (form.get("action") or "generate").strip().lower(),
+        "topUp": (form.get("topUp") or "").strip() in {"1", "true"},
         "config": config,
         "folderId": folder_id,
         "title": (form.get("title") or "").strip(),
@@ -309,6 +414,90 @@ def build_payload(
 
 
 # ── The pipeline ──────────────────────────────────────────────────────────────
+
+
+def _merge_token_usage(base: dict, extra: dict) -> dict:
+    for key in ("input_tokens", "output_tokens", "total_tokens"):
+        base[key] = base.get(key, 0) + extra.get(key, 0)
+    models = base.setdefault("models", {})
+    for name, stats in (extra.get("models") or {}).items():
+        target = models.setdefault(name, {"requests": 0, "input_tokens": 0, "output_tokens": 0})
+        for key, value in stats.items():
+            target[key] = target.get(key, 0) + value
+    return base
+
+
+def _top_up_after_import(
+    questions: list,
+    token_usage: dict,
+    used_cred,
+    leftover: str,
+    full_text: str,
+    target: int,
+    config: dict,
+    with_provider_fallback,
+    on_question,
+    on_notice,
+    emit,
+):
+    """
+    Generate the shortfall after an import came back with fewer questions than the
+    user asked for — the hybrid case, e.g. lecture slides ending in a short
+    "Câu hỏi ôn tập" section.
+
+    Generation runs on `leftover` (everything that did not become a question) so
+    the new questions cover the teaching content rather than restating the exam
+    items that were just extracted.
+    """
+    from app.features.quizz.quiz_generator import generate_quiz as gen_quiz
+    from app.features.quizz.text_processing import clean_text, filter_boilerplate
+
+    offset = len(questions)
+    deficit = target - offset
+
+    source = clean_text(filter_boilerplate(leftover))
+    quality_error, _ = validate_text_quality(source, deficit)
+    if quality_error:
+        # Too thin to carry the shortfall.  The extracted items are legitimate
+        # study material, so fall back to the whole document rather than quietly
+        # returning fewer questions than were asked for.
+        source = clean_text(filter_boilerplate(full_text))
+        quality_error, _ = validate_text_quality(source, deficit)
+        if quality_error:
+            emit("notice", {"code": "topUpUnavailable", "extracted": offset})
+            return questions, token_usage, used_cred
+        emit("notice", {"code": "topUpFromFullText", "extracted": offset})
+
+    def _renumber(question: dict, number: int) -> None:
+        question["origin"] = "generated"
+        question["questionNumber"] = offset + number
+        question["id"] = f"q{offset + number}_{uuid.uuid4().hex[:6]}"
+
+    def _on_generated(question: dict, number: int) -> None:
+        _renumber(question, number)
+        if on_question:
+            on_question(question, question["questionNumber"])
+
+    (generated, gen_usage), used_cred = with_provider_fallback(
+        lambda active: gen_quiz(
+            text=source[:40_000],
+            num_questions=deficit,
+            question_type=config["questionType"],
+            difficulty=config["difficulty"],
+            language=config["language"],
+            cred=active,
+            on_question=_on_generated if on_question else None,
+            on_notice=on_notice,
+        )
+    )
+
+    if not on_question:
+        for i, question in enumerate(generated):
+            _renumber(question, i + 1)
+
+    logger.info("Import top-up: %d extracted + %d generated (target %d)",
+                offset, len(generated), target)
+    return questions + generated, _merge_token_usage(token_usage, gen_usage), used_cred
 
 
 def _compute_page_distribution(payload: dict, question_count: int) -> dict | None:
@@ -393,6 +582,7 @@ def _persist(payload: dict, questions: list[dict], streaming: bool) -> tuple[str
             question_text=q.get("questionText", ""),
             correct_answer_id=correct_id,
             explanation=q.get("explanation", ""),
+            origin=q.get("origin", "generated"),
         )
         question.set_options(q.get("options", []))
         question.set_source_pages(q.get("sourcePages", []))
@@ -495,7 +685,7 @@ def run_generation(payload: dict, emit=_noop) -> dict:
         # already in the vector store instead of re-extracting from disk.
         use_vector_chunks = False
         combined_text = ""
-        if input_type == "files" and reused_file_ids and not saved_paths:
+        if action != "import" and input_type == "files" and reused_file_ids and not saved_paths:
             processed_ids = [
                 rid for rid in reused_file_ids
                 if (rec := UploadedFileRecord.query.get(rid)) and rec.processing_status == "completed"
@@ -512,7 +702,9 @@ def run_generation(payload: dict, emit=_noop) -> dict:
                     )
                     emit("stage", {"stage": "analyzing", "detail": "vectorFastPath", "total": len(chunks)})
 
-        if not use_vector_chunks:
+        if action == "import" and input_type == "files":
+            combined_text = extract_verbatim_text(payload, saved_paths, config, emit=emit)
+        elif not use_vector_chunks:
             combined_text = extract_combined_text(
                 input_type, payload, saved_paths, config,
                 reused_file_ids=reused_file_ids, emit=emit,
@@ -566,20 +758,25 @@ def run_generation(payload: dict, emit=_noop) -> dict:
                     cred = nxt
 
         if action == "import":
-            from app.features.quizz.text_processing import clean_text
             from app.features.quizz.quiz_generator import import_quiz_from_text
-            cleaned = clean_text(combined_text)
+            # No clean_text here: it strips the isolated `*` that marks a correct
+            # answer, and the preview/length would then describe text nobody used.
+            cleaned = combined_text
+            top_up = bool(payload.get("topUp"))
+            target = config["numberOfQuestions"] if top_up else 0
             emit("meta", {
                 "totalTextLength": len(cleaned),
                 "filesProcessed": len(saved_paths) + len(reused_file_ids),
                 "inputType": input_type,
-                "numberOfQuestions": 0,
+                "numberOfQuestions": target,
                 "config": config,
             })
-            emit("stage", {"stage": "generating"})
-            # Import sends the FULL text (not filtered/chunked) so question
-            # numbering and answer markers survive.
-            (questions, token_usage), used_cred = _with_provider_fallback(
+            emit("stage", {"stage": "generating", "total": target} if target
+                 else {"stage": "generating"})
+            # Import sends the FULL verbatim text so question numbering, option
+            # lines and answer markers survive.  It is still chunked downstream,
+            # but on question boundaries rather than on paragraphs.
+            (questions, token_usage, leftover), used_cred = _with_provider_fallback(
                 lambda active: import_quiz_from_text(
                     text=combined_text,
                     language=config.get("language", "vi"),
@@ -588,6 +785,13 @@ def run_generation(payload: dict, emit=_noop) -> dict:
                     on_notice=on_notice,
                 )
             )
+
+            if top_up and len(questions) < target:
+                questions, token_usage, used_cred = _top_up_after_import(
+                    questions, token_usage, used_cred, leftover, combined_text,
+                    target, config, _with_provider_fallback,
+                    on_question, on_notice, emit,
+                )
         else:
             quality_error, config["numberOfQuestions"] = validate_text_quality(
                 combined_text, config["numberOfQuestions"]

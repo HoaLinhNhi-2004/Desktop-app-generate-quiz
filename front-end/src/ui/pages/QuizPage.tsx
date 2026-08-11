@@ -50,6 +50,7 @@ import { exportQuizToDocx, exportQuizToKahoot } from "@/lib/export";
 import { QuizQuestion } from "../components/QuizQuestion";
 import { QuizStreamPending } from "../components/QuizStreamPending";
 import {
+  isAnswerCorrect,
   useQuizDraft,
   useQuizSource,
   useQuizStreamContext,
@@ -196,9 +197,6 @@ export function QuizPage() {
       const correctIdsArr = isMulti
         ? (q.correctAnswerIds ?? []).slice().sort()
         : [];
-      const isCorrect = isMulti
-        ? selectedIdsArr.join(",") === correctIdsArr.join(",")
-        : selectedRaw === q.correctAnswerId;
       return {
         questionId: q.id,
         questionText: q.questionText,
@@ -206,14 +204,18 @@ export function QuizPage() {
         selectedAnswerIds: isMulti ? selectedIdsArr : undefined,
         correctAnswerId: q.correctAnswerId,
         correctAnswerIds: isMulti ? correctIdsArr : undefined,
-        isCorrect,
+        isCorrect: isAnswerCorrect(q, selectedRaw),
       };
     });
 
     const correct = questionResults.filter((r) => r.isCorrect).length;
-    const skipped = questionResults.filter(
-      (r) => r.selectedAnswerId === null && !r.selectedAnswerIds?.length,
-    ).length;
+    const skipped = questions.filter((q, i) => {
+      // An imported essay question with no model answer cannot be graded.
+      // Counting it wrong would blame the user for the document's omission.
+      if (q.type === "short-answer" && !q.options[0]?.text) return true;
+      const r = questionResults[i];
+      return r.selectedAnswerId === null && !r.selectedAnswerIds?.length;
+    }).length;
 
     return {
       totalQuestions: questions.length,
@@ -234,16 +236,9 @@ export function QuizPage() {
     clearDraft();
 
     // Confetti effect
-    const correctCount = questions.filter((q) => {
-      const isMulti = q.type === "multiple-answer";
-      const raw = answers[q.id] || null;
-      if (isMulti) {
-        const sel = (raw || "").split(",").filter(Boolean).sort();
-        const cor = (q.correctAnswerIds ?? []).slice().sort();
-        return sel.join(",") === cor.join(",");
-      }
-      return raw === q.correctAnswerId;
-    }).length;
+    const correctCount = questions.filter((q) =>
+      isAnswerCorrect(q, answers[q.id] || null),
+    ).length;
     const scorePercent = (correctCount / questions.length) * 100;
 
     // Initial burst
@@ -306,9 +301,6 @@ export function QuizPage() {
         const correctIdsArr = isMulti
           ? (q.correctAnswerIds ?? []).slice().sort()
           : [];
-        const isCorrect = isMulti
-          ? selectedIdsArr.join(",") === correctIdsArr.join(",")
-          : selectedRaw === q.correctAnswerId;
         return {
           questionId: q.id,
           questionText: q.questionText,
@@ -316,7 +308,7 @@ export function QuizPage() {
           selectedAnswerIds: isMulti ? selectedIdsArr : undefined,
           correctAnswerId: q.correctAnswerId,
           correctAnswerIds: isMulti ? correctIdsArr : undefined,
-          isCorrect,
+          isCorrect: isAnswerCorrect(q, selectedRaw),
         };
       });
       const correct = questionResults.filter((r) => r.isCorrect).length;
@@ -399,6 +391,8 @@ export function QuizPage() {
         }
         default: {
           if (!currentQuestion) break;
+          // A short-answer is answered by typing, so A-D / 1-4 are just letters.
+          if (currentQuestion.type === "short-answer") break;
           const key = e.key.toUpperCase();
           let optionIndex = -1;
           if (key.length === 1 && key >= "A" && key <= "D") {
@@ -579,7 +573,16 @@ export function QuizPage() {
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
                 <DropdownMenuItem
-                  onClick={() => runExport(() => exportQuizToKahoot(questions))}
+                  onClick={() =>
+                    runExport(() => {
+                      const { skipped } = exportQuizToKahoot(questions);
+                      if (skipped > 0) {
+                        toast.warning(
+                          t("export.kahootSkippedShortAnswer", { count: skipped }),
+                        );
+                      }
+                    })
+                  }
                 >
                   <FileSpreadsheet className="size-4" />
                   {t("quiz.exportKahoot")}

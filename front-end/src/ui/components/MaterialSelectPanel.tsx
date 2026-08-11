@@ -229,6 +229,14 @@ export function MaterialSelectPanel({
                           {record.originalName}
                         </span>
                         {getInputModeBadge(record.inputMode)}
+                        {record.isQuestionBank && (
+                          <Badge
+                            variant="outline"
+                            className="shrink-0 border-amber-500/50 text-[10px] text-amber-600 dark:text-amber-400"
+                          >
+                            {i18n.t("materialSelect.questionBankBadge")}
+                          </Badge>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <span>{formatDate(record.createdAt)}</span>

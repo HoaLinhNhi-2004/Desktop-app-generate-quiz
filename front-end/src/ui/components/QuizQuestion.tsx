@@ -5,7 +5,9 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Copy, Check, Volume2, VolumeX } from "lucide-react";
+import { normalizeAnswerText } from "@/features/quizz";
 import type { QuizQuestion as QuizQuestionType } from "@/features/quizz";
 
 interface QuizQuestionProps {
@@ -56,7 +58,11 @@ export function QuizQuestion({
     lines.push("");
 
     // Options
-    if (question.type === "fill-blank") {
+    if (question.type === "short-answer") {
+      lines.push(
+        `${t("quizQuestion.answer")}${question.options[0]?.text ?? t("quizQuestion.noModelAnswer")}`,
+      );
+    } else if (question.type === "fill-blank") {
       const correctOpt = question.options.find(
         (o) => o.id === question.correctAnswerId,
       );
@@ -163,8 +169,17 @@ export function QuizQuestion({
         return (
           <Badge variant="secondary">{t("quizQuestion.typeFillBlank")}</Badge>
         );
+      case "short-answer":
+        return (
+          <Badge variant="secondary">{t("quizQuestion.typeShortAnswer")}</Badge>
+        );
     }
   };
+
+  const modelAnswer = question.options[0]?.text ?? "";
+  const shortAnswerCorrect =
+    !!modelAnswer &&
+    normalizeAnswerText(selectedAnswer ?? "") === normalizeAnswerText(modelAnswer);
 
   return (
     <div className={cn("space-y-4", className)}>
@@ -176,6 +191,11 @@ export function QuizQuestion({
               {question.questionNumber}
             </span>
             {getTypeBadge()}
+            {question.origin === "extracted" && (
+              <Badge variant="outline" className="border-amber-500/50 text-amber-600 dark:text-amber-400">
+                {t("quizQuestion.originExtracted")}
+              </Badge>
+            )}
           </div>
           <div className="flex items-center gap-1">
             {onToggleRead && (
@@ -233,7 +253,36 @@ export function QuizQuestion({
       {/* Options — fill-blank is generated as a/b/c/d like multiple-choice
           (see quiz_generator.py), so it is answered by picking an option, not
           by typing: grading compares option ids. */}
-      {question.type === "multiple-answer" ? (
+      {question.type === "short-answer" ? (
+        <div className="space-y-2">
+          <Textarea
+            value={selectedAnswer ?? ""}
+            onChange={(e) => onAnswerChange(question.id, e.target.value)}
+            disabled={showResult}
+            rows={3}
+            placeholder={t("quizQuestion.shortAnswerPlaceholder")}
+            aria-label={t("quizQuestion.typeShortAnswer")}
+            className={cn(
+              showResult &&
+                modelAnswer &&
+                (shortAnswerCorrect
+                  ? "border-green-500 bg-green-500/10"
+                  : "border-red-500 bg-red-500/10"),
+            )}
+          />
+          {showResult &&
+            (modelAnswer ? (
+              <div className="rounded-lg border border-green-500 bg-green-500/10 p-3 text-sm">
+                <span className="font-medium">{t("quizQuestion.modelAnswer")}</span>{" "}
+                {modelAnswer}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {t("quizQuestion.noModelAnswer")}
+              </p>
+            ))}
+        </div>
+      ) : question.type === "multiple-answer" ? (
         <div
           className="space-y-2"
           role="group"

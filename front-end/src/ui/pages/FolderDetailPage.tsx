@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -15,6 +15,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -519,12 +522,29 @@ export function FolderDetailPage() {
 
   const [config, setConfig] = useState<QuizConfig>(DEFAULT_CONFIG);
   const [reusedFileIds, setReusedFileIds] = useState<string[]>([]);
-  const [quizAction, setQuizAction] = useState<"generate" | "import">("generate");
+  // null = the user has not chosen, so detection decides. Once they pick a mode
+  // themselves it sticks, and detection must never override them.
+  const [pickedAction, setPickedAction] = useState<"generate" | "import" | null>(
+    null,
+  );
+  const [topUp, setTopUp] = useState(false);
 
   const { job, isStarting, startQuizStream } = useQuizStreamContext();
+  const { data: uploadRecords } = useUploadRecords(id);
   const isStreamRunning = job?.status === "running";
 
   const inputReady = reusedFileIds.length > 0;
+
+  const detectedQuestionBank = useMemo(
+    () =>
+      (uploadRecords ?? []).some(
+        (r) => r.isQuestionBank && reusedFileIds.includes(r.id),
+      ),
+    [uploadRecords, reusedFileIds],
+  );
+
+  const quizAction =
+    pickedAction ?? (detectedQuestionBank ? "import" : "generate");
 
   const handleGenerate = async () => {
     if (!inputReady) {
@@ -543,6 +563,7 @@ export function FolderDetailPage() {
         folderId: id,
         reusedFileIds,
         action: quizAction,
+        topUp: quizAction === "import" ? topUp : undefined,
       },
       config,
     });
@@ -676,6 +697,23 @@ export function FolderDetailPage() {
 
                 {/* Mode Toggle: Generate vs Import */}
                 <div className="px-6 pb-3">
+                  {detectedQuestionBank && quizAction === "generate" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPickedAction("import");
+                      }}
+                      className="mb-2 flex w-full items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-left text-[11px] leading-relaxed text-amber-700 transition-colors hover:bg-amber-500/15 dark:text-amber-300"
+                    >
+                      <FileSearch className="mt-0.5 size-3.5 shrink-0" />
+                      <span>
+                        {t("smartImportQuiz.detectedHint")}{" "}
+                        <span className="font-semibold underline">
+                          {t("smartImportQuiz.detectedSwitch")}
+                        </span>
+                      </span>
+                    </button>
+                  )}
                   <div className="flex rounded-lg border bg-muted/30 p-1 gap-1">
                     <button
                       type="button"
@@ -685,7 +723,9 @@ export function FolderDetailPage() {
                           ? "bg-background shadow-sm text-foreground"
                           : "text-muted-foreground hover:text-foreground",
                       )}
-                      onClick={() => setQuizAction("generate")}
+                      onClick={() => {
+                        setPickedAction("generate");
+                      }}
                     >
                       <Sparkles className="size-3.5" />
                       {t("smartImportQuiz.modeGenerate")}
@@ -698,7 +738,9 @@ export function FolderDetailPage() {
                           ? "bg-background shadow-sm text-foreground"
                           : "text-muted-foreground hover:text-foreground",
                       )}
-                      onClick={() => setQuizAction("import")}
+                      onClick={() => {
+                        setPickedAction("import");
+                      }}
                     >
                       <FileSearch className="size-3.5" />
                       {t("smartImportQuiz.modeImport")}
@@ -723,17 +765,67 @@ export function FolderDetailPage() {
                       </div>
                     </ScrollArea>
                   ) : (
-                    <div className="flex flex-col items-center justify-center gap-3 h-full px-6 text-center">
-                      <div className="flex size-14 items-center justify-center rounded-full bg-primary/10">
-                        <FileSearch className="size-7 text-primary" />
+                    <ScrollArea className="h-full">
+                      <div className="flex flex-col items-center gap-3 px-6 pb-4 text-center">
+                        <div className="flex size-14 items-center justify-center rounded-full bg-primary/10">
+                          <FileSearch className="size-7 text-primary" />
+                        </div>
+                        <p className="text-sm font-medium">
+                          {t("smartImportQuiz.importReadyTitle")}
+                        </p>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          {t("smartImportQuiz.importReadyDesc")}
+                        </p>
+
+                        <div className="mt-2 w-full space-y-3 rounded-lg border p-3 text-left">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-0.5">
+                              <Label
+                                htmlFor="import-top-up"
+                                className="text-xs font-medium"
+                              >
+                                {t("smartImportQuiz.topUpLabel")}
+                              </Label>
+                              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                                {t("smartImportQuiz.topUpHint")}
+                              </p>
+                            </div>
+                            <Switch
+                              id="import-top-up"
+                              checked={topUp}
+                              onCheckedChange={setTopUp}
+                            />
+                          </div>
+                          {topUp && (
+                            <div className="flex items-center justify-between gap-3">
+                              <Label
+                                htmlFor="import-top-up-count"
+                                className="text-xs text-muted-foreground"
+                              >
+                                {t("smartImportQuiz.topUpCount")}
+                              </Label>
+                              <Input
+                                id="import-top-up-count"
+                                type="number"
+                                min={1}
+                                max={100}
+                                value={config.numberOfQuestions}
+                                onChange={(e) =>
+                                  setConfig({
+                                    ...config,
+                                    numberOfQuestions: Math.max(
+                                      1,
+                                      Math.min(100, Number(e.target.value) || 1),
+                                    ),
+                                  })
+                                }
+                                className="h-8 w-20"
+                              />
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <p className="text-sm font-medium">
-                        {t("smartImportQuiz.importReadyTitle")}
-                      </p>
-                      <p className="text-xs text-muted-foreground leading-relaxed">
-                        {t("smartImportQuiz.importReadyDesc")}
-                      </p>
-                    </div>
+                    </ScrollArea>
                   )}
                 </CardContent>
 

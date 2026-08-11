@@ -5,7 +5,12 @@ export type QuestionType =
   | "multiple-answer"
   | "true-false"
   | "fill-blank"
+  /** Free-text answer, no options. Import-only — generation never produces it. */
+  | "short-answer"
   | "mixed";
+
+/** Whether a question was copied out of the source document or written by the model. */
+export type QuestionOrigin = "extracted" | "generated";
 
 export type Difficulty = "easy" | "medium" | "hard" | "mixed";
 
@@ -33,6 +38,7 @@ export interface QuizQuestion {
   explanation?: string;
   sourcePages?: number[];
   sourceKeyword?: string[];
+  origin?: QuestionOrigin;
 }
 
 /** Ways a question can be incomplete — see `validation.ts`. */

@@ -221,6 +221,23 @@ def _m_010_multi_provider_llm(cursor: sqlite3.Cursor) -> None:
     )
 
 
+def _m_011_question_bank_import(cursor: sqlite3.Cursor) -> None:
+    """Import of documents that already contain questions.
+
+    `question_bank_score` is the ingest-time heuristic that drives the "this looks
+    like an exam" nudge; `origin` records whether a question was copied out of the
+    document or written by the model, which is what makes a hybrid quiz readable.
+    """
+    _add_column_if_missing(
+        cursor, "uploaded_files", "question_bank_score",
+        "question_bank_score REAL DEFAULT 0",
+    )
+    _add_column_if_missing(
+        cursor, "questions", "origin",
+        "origin VARCHAR(16) DEFAULT 'generated'",
+    )
+
+
 MIGRATIONS: List[Migration] = [
     ("002_api_keys_extras", "API keys: model_usage + key_hash + unique index", _m_002_api_keys_extras),
     ("003_folder_extras", "Folders: is_favorite + last_accessed_at", _m_003_folder_extras),
@@ -231,6 +248,7 @@ MIGRATIONS: List[Migration] = [
     ("008_integration_connections", "Integrations: OAuth connections for Google Drive / Notion", _m_008_integration_connections),
     ("009_integration_credentials", "Integrations: user-supplied OAuth app credentials", _m_009_integration_credentials),
     ("010_multi_provider_llm", "LLM: provider column, model catalogue cache, app settings", _m_010_multi_provider_llm),
+    ("011_question_bank_import", "Import: uploaded_files.question_bank_score + questions.origin", _m_011_question_bank_import),
 ]
 
 

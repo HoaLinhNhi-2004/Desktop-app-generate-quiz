@@ -336,7 +336,10 @@ export function useQuizStream(): QuizStreamContextValue {
           stage: "queued",
           notice: null,
           questions: [],
-          expectedTotal: action === "import" ? 0 : config.numberOfQuestions,
+          // Import only knows its count up front when top-up is on; otherwise the
+          // document decides and the `meta` event fills this in.
+          expectedTotal:
+            action === "import" && !options.topUp ? 0 : config.numberOfQuestions,
           error: null,
           startedAt: Date.now(),
           firstQuestionAt: null,

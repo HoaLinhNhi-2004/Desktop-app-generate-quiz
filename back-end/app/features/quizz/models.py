@@ -82,6 +82,7 @@ class Question(db.Model):
     explanation = db.Column(db.Text, default="")
     source_pages = db.Column(db.Text, nullable=True)  # JSON: [1, 2, 3]
     source_keyword = db.Column(db.Text, nullable=True)  # JSON array of verbatim phrases from source text
+    origin = db.Column(db.String(16), default="generated")  # extracted (copied from the document) | generated
 
     quiz_set = db.relationship("QuizSet", back_populates="questions")
 
@@ -140,6 +141,7 @@ class Question(db.Model):
             "explanation": self.explanation or "",
             "sourcePages": self.get_source_pages(),
             "sourceKeyword": self.get_source_keyword(),
+            "origin": self.origin or "generated",
         }
         if self.type == "multiple-answer":
             d["correctAnswerIds"] = self.get_correct_answer_ids()

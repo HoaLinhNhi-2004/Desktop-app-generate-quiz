@@ -21,6 +21,7 @@ const EDITABLE_TYPES: QuestionType[] = [
   "multiple-answer",
   "true-false",
   "fill-blank",
+  "short-answer",
 ];
 
 type QuestionEditorProps = {
@@ -49,6 +50,7 @@ export function QuestionEditor({
 }: QuestionEditorProps) {
   const { t } = useTranslation();
   const issues = getQuestionIssues(question);
+  const isShortAnswer = question.type === "short-answer";
   // The backend can hold types the editor does not offer (e.g. "mixed" from a
   // generation config); without this the trigger would render blank.
   const typeOptions = EDITABLE_TYPES.includes(question.type)
@@ -122,6 +124,23 @@ export function QuestionEditor({
           />
         </div>
 
+        {isShortAnswer ? (
+          <div className="grid gap-2">
+            <Label htmlFor="model-answer">{t("editQuiz.modelAnswerLabel")}</Label>
+            <Textarea
+              id="model-answer"
+              value={question.options[0]?.text ?? ""}
+              onChange={(e) =>
+                // A short-answer keeps its model answer in a single option, so the
+                // grader and the exporters can stay option-based for every type.
+                onChange("options", [{ id: "a", text: e.target.value }])
+              }
+              rows={2}
+              className="resize-none"
+              placeholder={t("editQuiz.modelAnswerPlaceholder")}
+            />
+          </div>
+        ) : (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <span
@@ -191,6 +210,7 @@ export function QuestionEditor({
             ))}
           </div>
         </div>
+        )}
 
         <div className="grid gap-2 border-t pt-4">
           <Label htmlFor="explanation" className="text-muted-foreground">
