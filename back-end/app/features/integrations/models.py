@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 from app.db import db
 from app.features.api_keys.crypto import encrypt, decrypt
+from app.utils.times import iso_utc
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ class IntegrationCredential(db.Model):
             "clientSecretMasked": mask_secret(self.client_secret),
             "pickerApiKeyMasked": mask_secret(self.picker_api_key),
             "updatedAt": (
-                self.updated_at.isoformat().replace("+00:00", "Z")
+                iso_utc(self.updated_at)
                 if self.updated_at else None
             ),
         }
@@ -152,7 +153,7 @@ class IntegrationConnection(db.Model):
         def _iso(value):
             if not value:
                 return None
-            return value.isoformat().replace("+00:00", "Z")
+            return iso_utc(value)
 
         return {
             "provider": self.provider,

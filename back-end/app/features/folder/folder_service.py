@@ -1,9 +1,13 @@
+import os
 import uuid
+import logging
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
 from app.db import db
 from app.features.folder.models import Folder
+
+logger = logging.getLogger(__name__)
 
 
 def get_all_folders() -> List[Dict]:
@@ -41,12 +45,41 @@ def update_folder(folder_id: str, data: Dict) -> Optional[Dict]:
 
 
 def delete_folder(folder_id: str) -> bool:
-    """Delete a folder by ID (quiz_sets belonging to it get folder_id set to NULL)."""
+    """Delete a folder, its materials on disk, and its vector chunks.
+
+    The ORM cascades to quiz_sets, questions, uploaded_files and attempts, so the
+    rows holding `stored_path` disappear with the folder. Anything not cleaned up
+    *before* the delete is therefore unreachable forever: the files stayed in
+    UPLOAD_FOLDER and the embeddings stayed in ChromaDB with nothing left to
+    point at them. Deleting one material at a time always did both (see
+    upload/routes.py:delete_upload); this path did neither.
+    """
     folder = Folder.query.get(folder_id)
     if not folder:
         return False
+
+    records = list(folder.uploaded_files or [])
+
+    # Vector chunks first — one bulk delete on the folder_id metadata rather than
+    # one call per record.
+    try:
+        from app.features.upload.vector_store import delete_folder_chunks
+        delete_folder_chunks(folder_id)
+    except Exception as e:
+        logger.warning("Could not delete vector chunks for folder %s: %s", folder_id, e)
+
+    for record in records:
+        if not record.stored_path:
+            continue
+        try:
+            if os.path.isfile(record.stored_path):
+                os.remove(record.stored_path)
+        except OSError as e:
+            logger.warning("Could not delete stored file %s: %s", record.stored_path, e)
+
     db.session.delete(folder)
     db.session.commit()
+    logger.info("Deleted folder %s along with %d material(s)", folder_id, len(records))
     return True
 
 

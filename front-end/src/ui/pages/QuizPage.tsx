@@ -60,6 +60,7 @@ import type {
   QuizResult,
 } from "@/features/quizz";
 import { useSaveAttempt } from "@/features/stats";
+import type { SaveAttemptPayload } from "@/features/stats";
 
 export function QuizPage() {
   const navigate = useNavigate();
@@ -99,6 +100,10 @@ export function QuizPage() {
   const startTime = isLive ? source.firstQuestionAt : mountTime;
 
   const saveAttempt = useSaveAttempt();
+  // Kept so the result screen can resend after every automatic retry failed.
+  const [pendingAttempt, setPendingAttempt] = useState<SaveAttemptPayload | null>(
+    null,
+  );
 
   // Nothing to show and nothing on the way — go home.
   useEffect(() => {
@@ -233,7 +238,9 @@ export function QuizPage() {
     // was actually shown.
     if (isLive && !isStreamComplete) stopQuizStream();
     setIsSubmitted(true);
-    clearDraft();
+    // The draft is cleared only once the attempt is safely stored — see the
+    // mutate() call below. Clearing it here meant a failed save left nothing to
+    // recover from.
 
     // Confetti effect
     const correctCount = questions.filter((q) =>
@@ -290,7 +297,8 @@ export function QuizPage() {
       requestAnimationFrame(frame);
     }
 
-    // Save attempt to backend (fire-and-forget)
+    // Save attempt to backend. Retried by the hook; the payload is kept so the
+    // results screen can offer a manual resend if every retry fails.
     if (quizSetId) {
       const questionResults = questions.map((q) => {
         const isMulti = q.type === "multiple-answer";
@@ -315,7 +323,7 @@ export function QuizPage() {
       const skipped = questionResults.filter(
         (r) => r.selectedAnswerId === null && !r.selectedAnswerIds?.length,
       ).length;
-      saveAttempt.mutate({
+      const payload: SaveAttemptPayload = {
         quizSetId,
         folderId: folderId || undefined,
         score: (correct / questions.length) * 100,
@@ -325,7 +333,9 @@ export function QuizPage() {
         totalQuestions: questions.length,
         timeTaken: elapsed,
         questionResults,
-      });
+      };
+      setPendingAttempt(payload);
+      saveAttempt.mutate(payload, { onSuccess: () => clearDraft() });
     }
   }, [
     quizSetId,
@@ -847,6 +857,31 @@ export function QuizPage() {
             </div>
 
             <CardContent className="p-5 space-y-4">
+              {/* The score above is computed locally, so it shows even when the
+                  attempt never reached the backend. Say so, and offer a resend —
+                  otherwise the run silently misses from history and stats. */}
+              {saveAttempt.isError && pendingAttempt && (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 space-y-2">
+                  <p className="text-xs text-amber-500">
+                    {t("quiz.results.saveFailed")}
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={saveAttempt.isPending}
+                    onClick={() =>
+                      saveAttempt.mutate(pendingAttempt, {
+                        onSuccess: () => clearDraft(),
+                      })
+                    }
+                  >
+                    {saveAttempt.isPending
+                      ? t("quiz.results.saveRetrying")
+                      : t("quiz.results.saveRetry")}
+                  </Button>
+                </div>
+              )}
+
               {/* Stat bars */}
               <div className="space-y-3">
                 <div className="space-y-1.5">

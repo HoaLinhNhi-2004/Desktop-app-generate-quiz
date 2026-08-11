@@ -4,6 +4,7 @@ Quizz feature - SQLAlchemy models (QuizSet, Question).
 import json
 from datetime import datetime, timezone
 from app.db import db
+from app.utils.times import iso_utc
 
 
 class QuizSet(db.Model):
@@ -56,7 +57,7 @@ class QuizSet(db.Model):
             "folderId": self.folder_id,
             "title": self.title or "",
             "config": self.get_config(),
-            "createdAt": self.created_at.isoformat().replace("+00:00", "Z") if self.created_at else None,
+            "createdAt": iso_utc(self.created_at),
             "pageDistribution": self.get_page_distribution(),
             "sourceUploadIds": self.get_source_upload_ids(),
         }

@@ -238,6 +238,29 @@ def _m_011_question_bank_import(cursor: sqlite3.Cursor) -> None:
     )
 
 
+def _m_012_prune_orphan_attempts(cursor: sqlite3.Cursor) -> None:
+    """Delete quiz attempts whose quiz set no longer exists.
+
+    These accumulated because SQLite runs with `foreign_keys=OFF` unless a
+    connection turns it on, which nothing did — so `POST /api/stats/attempts`
+    accepted an unknown quizSetId, wrote the row with a NULL folder_id and
+    returned 201. The row then never appeared in any stats screen, since those
+    all filter by folder.
+
+    The pragma is enabled from app startup now, so this only has to clear what
+    was already written. Runs before any new enforcement could trip over them.
+    """
+    cursor.execute(
+        """
+        DELETE FROM quiz_attempts
+        WHERE quiz_set_id IS NULL
+           OR quiz_set_id NOT IN (SELECT id FROM quiz_sets)
+        """
+    )
+    if cursor.rowcount:
+        logger.info("Pruned %d orphan quiz attempt(s)", cursor.rowcount)
+
+
 MIGRATIONS: List[Migration] = [
     ("002_api_keys_extras", "API keys: model_usage + key_hash + unique index", _m_002_api_keys_extras),
     ("003_folder_extras", "Folders: is_favorite + last_accessed_at", _m_003_folder_extras),
@@ -249,6 +272,7 @@ MIGRATIONS: List[Migration] = [
     ("009_integration_credentials", "Integrations: user-supplied OAuth app credentials", _m_009_integration_credentials),
     ("010_multi_provider_llm", "LLM: provider column, model catalogue cache, app settings", _m_010_multi_provider_llm),
     ("011_question_bank_import", "Import: uploaded_files.question_bank_score + questions.origin", _m_011_question_bank_import),
+    ("012_prune_orphan_attempts", "Stats: delete attempts whose quiz set no longer exists", _m_012_prune_orphan_attempts),
 ]
 
 

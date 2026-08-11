@@ -3,6 +3,7 @@ Folder feature - SQLAlchemy models.
 """
 from datetime import datetime, timezone
 from app.db import db
+from app.utils.times import iso_utc
 
 
 class Folder(db.Model):
@@ -32,10 +33,10 @@ class Folder(db.Model):
             "name": self.name,
             "description": self.description or "",
             "color": self.color or "hsl(262 83% 58%)",
-            "createdAt": self.created_at.isoformat().replace("+00:00", "Z") if self.created_at else None,
+            "createdAt": iso_utc(self.created_at),
             "quizCount": quiz_count,
             "isFavorite": bool(self.is_favorite),
-            "lastAccessedAt": self.last_accessed_at.isoformat().replace("+00:00", "Z") if self.last_accessed_at else None,
+            "lastAccessedAt": iso_utc(self.last_accessed_at),
             "processingCount": processing_count,
         }
 

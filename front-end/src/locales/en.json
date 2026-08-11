@@ -161,6 +161,9 @@
       "excellent": "Excellent! 🎉",
       "good": "Good job! 👍",
       "needsWork": "Keep trying 💪",
+      "saveFailed": "This result could not be saved to the server, so it is missing from your history and stats. Your answers are still kept.",
+      "saveRetry": "Resend result",
+      "saveRetrying": "Resending...",
       "correct": "Correct",
       "wrong": "Wrong",
       "skipped": "Skipped",
@@ -1030,11 +1033,11 @@
   "confirm": {
     "deleteFolder": {
       "title": "Delete folder \"{{name}}\"?",
-      "desc": "This permanently deletes the folder and every document inside it. This cannot be undone."
+      "desc": "This permanently deletes the folder along with every document, quiz set and attempt inside it. Your XP, level and badges drop accordingly. This cannot be undone."
     },
     "deleteQuizSet": {
       "title": "Delete quiz set \"{{name}}\"?",
-      "desc": "All questions and the attempt history for this quiz set will be permanently deleted."
+      "desc": "All questions and the attempt history for this quiz set will be permanently deleted. XP, level and badges are recomputed from the remaining history, so they will drop."
     },
     "deleteMaterial": {
       "title": "Delete material \"{{name}}\"?",

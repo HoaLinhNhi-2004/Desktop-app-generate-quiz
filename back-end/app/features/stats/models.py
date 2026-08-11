@@ -4,6 +4,7 @@ Stats feature - SQLAlchemy model for tracking quiz attempts.
 import json
 from datetime import datetime, timezone
 from app.db import db
+from app.utils.times import iso_utc
 
 
 class QuizAttempt(db.Model):
@@ -56,7 +57,7 @@ class QuizAttempt(db.Model):
             "totalQuestions": self.total_questions,
             "timeTaken": self.time_taken,
             "createdAt": (
-                self.created_at.isoformat().replace("+00:00", "Z")
+                iso_utc(self.created_at)
                 if self.created_at
                 else None
             ),

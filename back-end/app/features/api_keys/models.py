@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.db import db
 from app.features.api_keys.crypto import decrypt, encrypt
+from app.utils.times import iso_utc
 
 logger = logging.getLogger(__name__)
 
@@ -182,9 +183,9 @@ class ApiKey(db.Model):
             "outputTokensToday": output_tokens_today,
             "tokensToday": input_tokens_today + output_tokens_today,
             "datePst": today.isoformat(),
-            "lastUsedAt": self.last_used_at.isoformat().replace("+00:00", "Z") if self.last_used_at else None,
+            "lastUsedAt": iso_utc(self.last_used_at),
             "lastError": self.last_error or "",
-            "createdAt": self.created_at.isoformat().replace("+00:00", "Z") if self.created_at else None,
+            "createdAt": iso_utc(self.created_at),
         }
 
 

@@ -17,6 +17,7 @@ from app.db import db
 from app.features.stats.models import QuizAttempt
 from app.features.quizz.models import QuizSet
 from app.features.folder.models import Folder
+from app.utils.times import iso_utc
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +37,14 @@ def save_attempt():
     if not quiz_set_id:
         return jsonify({"error": "quizSetId is required"}), 400
 
-    # Look up the quiz set to get folder_id
+    # The attempt is meaningless without its quiz set: it would not show up in any
+    # stats screen (those filter by folder), and with foreign keys now enforced the
+    # insert fails anyway. Say so plainly instead of returning 201 for a row that
+    # is dropped or invisible.
     quiz_set = QuizSet.query.get(quiz_set_id)
-    folder_id = quiz_set.folder_id if quiz_set else data.get("folderId")
+    if quiz_set is None:
+        return jsonify({"error": f"Quiz set not found: {quiz_set_id}"}), 404
+    folder_id = quiz_set.folder_id
 
     attempt = QuizAttempt(
         id=str(uuid.uuid4()),
@@ -134,7 +140,7 @@ def folder_detail_stats(folder_id):
             "bestScore": round(max(qs_scores), 1),
             "avgScore": round(sum(qs_scores) / len(qs_scores), 1),
             "lastScore": round(last_attempt.score, 1),
-            "lastAttemptAt": last_attempt.created_at.isoformat().replace("+00:00", "Z") if last_attempt.created_at else None,
+            "lastAttemptAt": iso_utc(last_attempt.created_at),
         })
 
     completed_quiz_sets = len(attempted_set_ids)

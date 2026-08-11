@@ -4,6 +4,7 @@ Upload feature - SQLAlchemy model for tracking uploaded files per folder.
 from datetime import datetime, timezone
 from app.db import db
 from app.features.quizz.question_patterns import QUESTION_BANK_THRESHOLD
+from app.utils.times import iso_utc
 
 
 class UploadedFileRecord(db.Model):
@@ -58,7 +59,7 @@ class UploadedFileRecord(db.Model):
             "hasFile": self.has_stored_file,
             "quizSetId": self.quiz_set_id,
             "createdAt": (
-                self.created_at.isoformat().replace("+00:00", "Z")
+                iso_utc(self.created_at)
                 if self.created_at
                 else None
             ),

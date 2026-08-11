@@ -4,12 +4,20 @@ import { saveAttemptApi, getFolderDetailStatsApi } from "./api";
 import type { FolderDetailStats, SaveAttemptPayload } from "./types";
 import { notifyError } from "@/lib/notify";
 
-/** Save a quiz attempt result */
+/** Save a quiz attempt result.
+ *
+ * Retries: the attempt is the only record of work the user cannot redo, and the
+ * bundled backend is routinely mid-restart at exactly this moment. React Query's
+ * default for mutations is no retry at all, so a single dropped connection used
+ * to lose a finished quiz.
+ */
 export function useSaveAttempt() {
   const qc = useQueryClient();
   const { t } = useTranslation();
   return useMutation<unknown, Error, SaveAttemptPayload>({
     mutationFn: (payload) => saveAttemptApi(payload),
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["stats"] });
       qc.invalidateQueries({ queryKey: ["attempts"] });

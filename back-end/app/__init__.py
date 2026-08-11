@@ -1,9 +1,34 @@
 import os
+import sqlite3
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
+
 from config import get_config
 from app.db import db
 from app.migrations import run_migrations
+
+
+@event.listens_for(Engine, "connect")
+def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record):
+    """Turn on referential integrity for every SQLite connection.
+
+    SQLite defaults `foreign_keys` to OFF *per connection*, so without this the
+    `ondelete=` clauses throughout the schema are inert decoration: the app was
+    happily inserting quiz attempts referencing quiz sets that do not exist, and
+    those rows are then invisible in every stats screen.
+
+    Guarded on the driver type — the listener is engine-wide and other backends
+    reject the pragma.
+    """
+    if isinstance(dbapi_connection, sqlite3.Connection):
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cursor.close()
 
 
 def _encrypt_existing_api_keys(app):
@@ -144,6 +169,15 @@ def create_app(config_class=None):
     app.register_blueprint(integrations_bp, url_prefix="/api/integrations")
 
     _register_api_error_handlers(app)
+
+    # Materials interrupted by the previous shutdown have nothing to restart
+    # them — the work queue lives in this process. Pick them up here.
+    with app.app_context():
+        try:
+            from app.features.upload.routes import requeue_unfinished_records
+            requeue_unfinished_records()
+        except Exception as e:
+            app.logger.warning("Could not requeue unfinished materials: %s", e)
 
     # Health check route
     @app.route("/api/health")

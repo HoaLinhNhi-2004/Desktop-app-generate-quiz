@@ -13,20 +13,18 @@ import logging
 import threading
 from urllib.parse import urlparse
 from flask import Blueprint, request, jsonify, current_app
-from werkzeug.utils import secure_filename
+from file_types import SUPPORTED_EXTENSIONS
 from app.db import db
 from app.features.upload.models import UploadedFileRecord
 from app.utils import event_jobs
+from app.utils.filenames import display_name, split_extension, storage_name
 
 logger = logging.getLogger(__name__)
 
 upload_bp = Blueprint("upload", __name__)
 
-ALLOWED_EXTENSIONS = {"pdf", "doc", "docx", "png", "jpg", "jpeg", "webp", "bmp", "xlsx", "xls", "csv"}
-
-
 def _upload_allowed(filename: str) -> bool:
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    return split_extension(filename)[1] in SUPPORTED_EXTENSIONS
 
 
 # One worker thread per folder, draining a FIFO queue.
@@ -95,6 +93,54 @@ def _start_processing(folder_id: str, record_ids: list[str]) -> None:
         threading.Thread(target=_drain_queue, args=(app, folder_id), daemon=True).start()
 
 
+def requeue_unfinished_records() -> int:
+    """Re-enqueue materials left unfinished by a backend restart.
+
+    `_queues` and `_workers` are process-local, so killing the backend mid-run —
+    which is exactly what closing the desktop app does — stranded every record.
+    Rows sat at `processing` (or at `pending`, never having reached a worker)
+    with nothing left to move them, while the folder badge counted them forever
+    and the materials list polled every 3 seconds for the life of the app. The
+    only escape was pressing Reprocess on each one, which nothing tells the user
+    about.
+
+    Must be called inside an app context.
+    """
+    from collections import defaultdict
+
+    stuck = (
+        UploadedFileRecord.query
+        .filter(UploadedFileRecord.processing_status.in_(("pending", "processing")))
+        .order_by(UploadedFileRecord.created_at)
+        .all()
+    )
+    if not stuck:
+        return 0
+
+    by_folder: dict[str, list[str]] = defaultdict(list)
+    for record in stuck:
+        # A record with no folder has no queue to belong to; leave it for the
+        # manual Reprocess button rather than inventing a home for it.
+        if not record.folder_id:
+            continue
+        record.processing_status = "pending"
+        by_folder[record.folder_id].append(record.id)
+
+    if not by_folder:
+        return 0
+
+    db.session.commit()
+    for folder_id, record_ids in by_folder.items():
+        _start_processing(folder_id, record_ids)
+
+    total = sum(len(ids) for ids in by_folder.values())
+    logger.info(
+        "Requeued %d unfinished material(s) across %d folder(s) after restart",
+        total, len(by_folder),
+    )
+    return total
+
+
 @upload_bp.route("/upload", methods=["POST"])
 def upload_materials():
     """
@@ -130,9 +176,13 @@ def upload_materials():
             return jsonify({"error": "No valid files uploaded"}), 400
 
         for f in valid_files:
-            fname = secure_filename(f.filename)
-            ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
-            unique_name = f"{uuid.uuid4().hex[:8]}_{fname}"
+            # The name shown to the user keeps its diacritics; only the on-disk
+            # copy is sanitised. The extension comes from the original name — the
+            # same string `_upload_allowed` just approved — so the two can never
+            # disagree about what type the file is.
+            shown_name = display_name(f.filename)
+            ext = split_extension(f.filename)[1]
+            unique_name = f"{uuid.uuid4().hex[:8]}_{storage_name(f.filename)}"
             stored_path = os.path.join(upload_folder, unique_name)
             f.save(stored_path)
             fsize = os.path.getsize(stored_path)
@@ -140,7 +190,7 @@ def upload_materials():
             record = UploadedFileRecord(
                 id=str(uuid.uuid4()),
                 folder_id=folder_id,
-                original_name=fname,
+                original_name=shown_name,
                 file_size=fsize,
                 file_type=ext,
                 input_mode="files",

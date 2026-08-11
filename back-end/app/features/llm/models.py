@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 from app.db import db
 from app.features.llm.types import ModelInfo
+from app.utils.times import iso_utc
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ class ProviderModel(db.Model):
             "rpm": self.rpm,
             "tpm": self.tpm,
             "tier": self.tier,
-            "fetchedAt": self.fetched_at.isoformat().replace("+00:00", "Z") if self.fetched_at else None,
+            "fetchedAt": iso_utc(self.fetched_at),
         }
 
 

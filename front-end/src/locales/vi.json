@@ -161,6 +161,9 @@
       "excellent": "Xuất sắc! 🎉",
       "good": "Khá tốt! 👍",
       "needsWork": "Cần cố gắng thêm 💪",
+      "saveFailed": "Chưa lưu được kết quả này lên máy chủ, nên nó chưa xuất hiện trong lịch sử và thống kê. Đáp án của bạn vẫn được giữ lại.",
+      "saveRetry": "Gửi lại kết quả",
+      "saveRetrying": "Đang gửi lại...",
       "correct": "Đúng",
       "wrong": "Sai",
       "skipped": "Bỏ qua",
@@ -1030,11 +1033,11 @@
   "confirm": {
     "deleteFolder": {
       "title": "Xóa thư mục \"{{name}}\"?",
-      "desc": "Thao tác này sẽ xóa vĩnh viễn thư mục và toàn bộ tài liệu bên trong. Bạn không thể hoàn tác."
+      "desc": "Thao tác này sẽ xóa vĩnh viễn thư mục cùng toàn bộ tài liệu, bộ quiz và lịch sử làm bài bên trong. Điểm XP, cấp độ và huy hiệu sẽ giảm theo. Bạn không thể hoàn tác."
     },
     "deleteQuizSet": {
       "title": "Xóa bộ quiz \"{{name}}\"?",
-      "desc": "Toàn bộ câu hỏi và lịch sử làm bài của bộ quiz này sẽ bị xóa vĩnh viễn."
+      "desc": "Toàn bộ câu hỏi và lịch sử làm bài của bộ quiz này sẽ bị xóa vĩnh viễn. Điểm XP, cấp độ và huy hiệu được tính lại từ lịch sử còn lại nên sẽ giảm theo."
     },
     "deleteMaterial": {
       "title": "Xóa tài liệu \"{{name}}\"?",
