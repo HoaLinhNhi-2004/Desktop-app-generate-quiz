@@ -6,6 +6,12 @@ import re
 import logging
 from collections import Counter
 
+from app.features.quizz.question_patterns import (
+    OPTION_LINE_RE,
+    QUESTION_BANK_THRESHOLD,
+    score_question_bank,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +69,12 @@ _INDEX_ENTRY_RE = re.compile(
 # Very short lines that are likely headers/footers when they repeat
 _SHORT_LINE_MAX = 80
 
+# Marks that mean nothing when they stand alone between two spaces — typically
+# scanner speckle or a mis-read diacritic. Deliberately narrow: anything not
+# listed here survives, because operators (`+ - = < > ± → ∈ ⇒ / * ^ | %`) and
+# ordinary punctuation are load-bearing in the subjects this app is used for.
+_OCR_SPECKLE_RE = re.compile(r"(?<=\s)[`´¨¦¤§¶·¬]+(?=\s)")
+
 
 def _is_heading_line(line: str) -> bool:
     """Heuristic: line looks like a section heading (short, no trailing period)."""
@@ -113,17 +125,29 @@ def filter_boilerplate(text: str) -> str:
       3. Repeated short lines (headers/footers that appear on every page)
       4. Entire boilerplate sections (TOC, References, Index, etc.)
 
+    Answer options are exempt from rule 3. In a multiple-choice paper "A. Đúng"
+    and "B. Sai" repeat once per question, which is precisely the signature this
+    filter used to read as a page footer — so every true/false paper arrived at
+    the model with its options deleted. Import mode was given a bypass in
+    900e340; generate and RAG ingest still run through here, so the exemption
+    belongs in the filter itself.
+
     Returns the filtered text.
     """
     if not text:
         return text
+
+    # A bare "12" on its own line is a page number in a textbook and a question
+    # number in an exam paper. Only strip them when the document does not look
+    # like a question bank.
+    looks_like_exam = score_question_bank(text) >= QUESTION_BANK_THRESHOLD
 
     lines = text.split("\n")
 
     # --- Pass 1: Remove standalone page numbers & TOC dot-lines ---
     filtered_lines: list[str] = []
     for line in lines:
-        if _PAGE_NUMBER_RE.match(line):
+        if not looks_like_exam and _PAGE_NUMBER_RE.match(line):
             continue
         if _TOC_LINE_RE.match(line):
             continue
@@ -133,7 +157,10 @@ def filter_boilerplate(text: str) -> str:
     # Short lines that appear 3+ times are likely page headers/footers
     short_lines = [l.strip() for l in filtered_lines if 0 < len(l.strip()) <= _SHORT_LINE_MAX]
     counts = Counter(short_lines)
-    repeated = {line for line, cnt in counts.items() if cnt >= 3}
+    repeated = {
+        line for line, cnt in counts.items()
+        if cnt >= 3 and not OPTION_LINE_RE.match(line)
+    }
     if repeated:
         filtered_lines = [
             l for l in filtered_lines
@@ -189,9 +216,15 @@ def clean_text(text: str) -> str:
     # Remove excessive spaces
     text = re.sub(r' {3,}', ' ', text)
 
-    # Remove isolated single characters that are likely OCR noise
-    # (but keep things like "a", "I", etc. in context)
-    text = re.sub(r'(?<=\s)[^\w\s](?=\s)', '', text)
+    # Remove isolated speckle the OCR invented between words.
+    #
+    # This used to be `(?<=\s)[^\w\s](?=\s)` — every isolated non-word character.
+    # That deletes the operators in "x + 2 = 5" (→ "x  2  5"), and takes `-`, `<`,
+    # `>`, `±`, `→`, `∈`, `⇒` with them, so maths, physics and chemistry papers
+    # lost their meaning on both the generate path and RAG ingest. An explicit
+    # deny-list of marks that carry no meaning standing alone is the safe
+    # direction to be wrong in: leaving a stray glyph costs nothing.
+    text = _OCR_SPECKLE_RE.sub('', text)
 
     return text.strip()
 
@@ -304,19 +337,92 @@ def chunk_importance(chunk: str) -> float:
     return technical / len(words)
 
 
+# Below this spread between the best and worst chunk, the ranking carries no
+# information and "most important" is just "first".
+_SCORE_SPREAD_MIN = 0.02
+
+# How much source text one question is allowed to draw on, and the bounds on the
+# total. The old rule was a flat 40 000 characters no matter what: a 5-question
+# quiz got the same budget as a 60-question one, and a 400-page textbook had
+# ~95 % of it thrown away *after* being fully extracted and OCR'd.
+_CHARS_PER_QUESTION = 2_500
+_MIN_SOURCE_CHARS = 40_000
+_MAX_SOURCE_CHARS = 120_000
+_SELECT_CHUNK_SIZE = 8_000
+
+
+def select_source_text(cleaned: str, num_questions: int) -> str:
+    """Pick the slice of a document that will be sent to the model.
+
+    Short documents pass through untouched. Longer ones are chunked and sampled,
+    with a budget that grows with the number of questions requested, because
+    asking for 50 questions out of the same 40 000 characters is what produces
+    near-duplicate items.
+
+    Downstream cost stays bounded: `quiz_generator` merges anything beyond
+    `_MAX_PARALLEL_CHUNKS` into that many calls, so a larger budget buys wider
+    coverage per call rather than more calls.
+    """
+    if not cleaned:
+        return cleaned
+
+    budget = min(
+        _MAX_SOURCE_CHARS,
+        max(_MIN_SOURCE_CHARS, max(1, num_questions) * _CHARS_PER_QUESTION),
+    )
+    if len(cleaned) <= budget:
+        return cleaned
+
+    chunks = chunk_text(cleaned, max_chunk_size=_SELECT_CHUNK_SIZE)
+    keep = max(1, budget // _SELECT_CHUNK_SIZE)
+    selected = select_important_chunks(chunks, n=keep)
+    source = "\n\n".join(selected)
+
+    if len(source) > budget:
+        source = source[:budget]
+    logger.info(
+        "Source selection: %d chars → %d chars (%d of %d chunks, %d questions)",
+        len(cleaned), len(source), len(selected), len(chunks), num_questions,
+    )
+    return source
+
+
+def _evenly_spaced(count: int, n: int) -> list[int]:
+    """`n` indices spread across `range(count)`, always including first and last."""
+    if n <= 1:
+        return [0]
+    step = (count - 1) / (n - 1)
+    return sorted({min(count - 1, round(i * step)) for i in range(n)})
+
+
 def select_important_chunks(chunks: list[str], n: int = 5) -> list[str]:
     """
-    Select the N most technically dense chunks from a list.
-    Also always includes the first chunk (often contains key definitions)
-    and the last chunk (often contains summary/conclusions).
+    Select N chunks that represent the document.
+
+    `chunk_importance` scores English technical writing — camelCase, snake_case,
+    ALL_CAPS abbreviations, code punctuation. Vietnamese prose (Văn, Sử, Địa)
+    scores at or near zero on every chunk, and `sorted` is stable, so "the six
+    most important chunks" silently degenerated into chunks 0-4 plus the last —
+    the cover, the table of contents and the back page of a 400-page book.
+
+    When the scores actually separate the chunks, use them. When they do not,
+    sample evenly across the document instead, so questions come from the whole
+    of it rather than the front matter.
 
     Returns chunks in their original order.
     """
     if len(chunks) <= n:
         return chunks
 
-    # Score all chunks
-    scored = sorted(enumerate(chunks), key=lambda x: chunk_importance(x[1]), reverse=True)
+    scores = [chunk_importance(c) for c in chunks]
+    if max(scores) - min(scores) < _SCORE_SPREAD_MIN:
+        logger.info(
+            "Chunk importance is flat (spread %.4f over %d chunks) — sampling evenly",
+            max(scores) - min(scores), len(chunks),
+        )
+        return [chunks[i] for i in _evenly_spaced(len(chunks), n)]
+
+    scored = sorted(enumerate(chunks), key=lambda x: scores[x[0]], reverse=True)
 
     # Collect top-N indices, always include first and last
     selected_indices = {0, len(chunks) - 1}

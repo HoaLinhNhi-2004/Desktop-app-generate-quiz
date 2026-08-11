@@ -22,6 +22,8 @@ export interface GenerateQuizResponse {
   extractedText: string;
   totalTextLength: number;
   filesProcessed: number;
+  /** Names of sources that were requested but yielded no text */
+  filesSkipped?: string[];
   config: QuizConfig;
   inputType: string;
   tokenUsage?: TokenUsage;

@@ -155,7 +155,10 @@ export interface QuizStreamStageEvent {
 
 export interface QuizStreamMetaEvent {
   type: "meta";
+  /** Length of the whole extracted document */
   totalTextLength: number;
+  /** Length of the slice actually sent to the model — smaller for long documents */
+  sourceTextLength?: number;
   filesProcessed: number;
   inputType: InputMode;
   /** 0 in import mode — the document decides how many questions there are */
@@ -193,6 +196,8 @@ export interface QuizStreamDoneEvent {
   extractedText: string;
   totalTextLength: number;
   filesProcessed: number;
+  /** Names of sources that were requested but yielded no text */
+  filesSkipped?: string[];
   inputType: InputMode;
   tokenUsage?: TokenUsage;
   pageDistribution?: PageDistribution | null;

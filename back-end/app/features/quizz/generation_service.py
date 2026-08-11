@@ -21,7 +21,7 @@ from collections import Counter
 from datetime import datetime, timezone
 
 from flask import current_app
-from werkzeug.utils import secure_filename
+from app.utils.filenames import display_name, split_extension, storage_name
 
 from app.db import db
 from app.features.quizz.models import QuizSet, Question
@@ -54,14 +54,13 @@ def _noop(event_type: str, data: dict) -> None:
 
 def allowed_file(filename: str) -> bool:
     allowed = current_app.config.get("ALLOWED_EXTENSIONS", set())
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in allowed
+    return split_extension(filename)[1] in allowed
 
 
 def save_uploaded_file(file) -> str:
     """Save one upload and return its path. Must run in the request thread."""
     upload_folder = current_app.config["UPLOAD_FOLDER"]
-    original_name = secure_filename(file.filename)
-    unique_name = f"{uuid.uuid4().hex[:8]}_{original_name}"
+    unique_name = f"{uuid.uuid4().hex[:8]}_{storage_name(file.filename)}"
     filepath = os.path.join(upload_folder, unique_name)
     file.save(filepath)
     return filepath
@@ -88,12 +87,11 @@ def save_request_files(files_list) -> tuple[list[str], list[dict]]:
         size = file.tell()
         file.seek(0)
         path = save_uploaded_file(file)
-        name = secure_filename(file.filename)
         saved_paths.append(path)
         file_meta.append({
-            "originalName": name,
+            "originalName": display_name(file.filename),
             "fileSize": size,
-            "ext": name.rsplit(".", 1)[-1].lower() if "." in name else "",
+            "ext": split_extension(file.filename)[1],
             "storedPath": path,
         })
     return saved_paths, file_meta
@@ -109,6 +107,12 @@ def extract_text_from_file(filepath: str, lang: str = "vi") -> str:
     elif ext in ["docx", "doc"]:
         from app.features.quizz.docx_service import extract_text_from_docx
         return extract_text_from_docx(filepath)
+    elif ext == "pptx":
+        from app.features.quizz.pptx_service import extract_text_from_pptx
+        return extract_text_from_pptx(filepath)
+    elif ext == "txt":
+        from app.features.quizz.text_file_service import extract_text_from_txt
+        return extract_text_from_txt(filepath)
     elif ext in ["xlsx", "xls", "csv"]:
         from app.features.quizz.spreadsheet_service import extract_text_from_spreadsheet
         return extract_text_from_spreadsheet(filepath, ext)
@@ -204,6 +208,7 @@ def extract_combined_text(
     config: dict,
     reused_file_ids: list | None = None,
     emit=_noop,
+    stats: dict | None = None,
 ) -> str:
     """
     Combined source text for the requested input type.
@@ -211,7 +216,22 @@ def extract_combined_text(
     `form` is any mapping with .get() — a Werkzeug MultiDict from the blocking
     route, or the plain payload dict from the streaming job.  Uploaded files must
     already be on disk (see save_request_files) and listed in `saved_paths`.
+
+    When `stats` is given it is filled with `filesRequested`, `filesUsed` and
+    `filesFailed` (a list of names). A reused record whose file has vanished, or
+    a file that yields no text, is skipped here — and the response used to report
+    every requested file as processed regardless, so a quiz built from 2 of 4
+    documents claimed all 4.
     """
+    failed: list[str] = []
+
+    def _record_stats(requested: int, used: int) -> None:
+        if stats is not None:
+            stats.update({
+                "filesRequested": requested,
+                "filesUsed": used,
+                "filesFailed": failed,
+            })
     if input_type == "youtube":
         youtube_url = (form.get("youtubeUrl") or "").strip()
         if not youtube_url:
@@ -219,6 +239,7 @@ def extract_combined_text(
         caption_lang = (form.get("captionLang") or "vi").strip() or "vi"
         emit("stage", {"stage": "extracting", "detail": "youtubeTranscript"})
         from app.features.quizz.youtube_service import extract_transcript
+        _record_stats(1, 1)
         return extract_transcript(youtube_url, lang=caption_lang)
 
     if input_type == "text":
@@ -227,9 +248,11 @@ def extract_combined_text(
             raise GenerationInputError("rawText is required for inputType=text")
         if len(raw_text) > 50000:
             raise GenerationInputError("rawText exceeds maximum length of 50,000 characters")
+        _record_stats(1, 1)
         return raw_text
 
     # files — new uploads (already saved) + reused records
+    requested = len(saved_paths) + len(reused_file_ids or [])
     reused_paths = []
     if reused_file_ids:
         for record_id in reused_file_ids:
@@ -239,6 +262,7 @@ def extract_combined_text(
                 logger.info("Reusing stored file: %s (%s)", record.original_name, record.stored_path)
             else:
                 logger.warning("Reused file record %s not found or file missing on disk", record_id)
+                failed.append(record.original_name if record else record_id)
 
     all_paths = saved_paths + reused_paths
     if not all_paths:
@@ -268,11 +292,16 @@ def extract_combined_text(
                         )
                 page_offset += n_pages
                 all_texts.append(paged_text)
+            else:
+                failed.append(os.path.basename(path))
         else:
             text = extract_text_from_file(path, lang=ocr_lang)
             if text.strip():
                 all_texts.append(text)
+            else:
+                failed.append(os.path.basename(path))
 
+    _record_stats(requested, len(all_texts))
     return "\n\n".join(all_texts)
 
 
@@ -281,6 +310,7 @@ def extract_verbatim_text(
     saved_paths: list,
     config: dict,
     emit=_noop,
+    stats: dict | None = None,
 ) -> str:
     """
     Source text for import mode, kept as close to the original document as possible.
@@ -301,6 +331,10 @@ def extract_verbatim_text(
 
     parts: list[str] = []
     page_offset = 0
+    # Same contract as extract_combined_text: report what was actually read, so
+    # `filesProcessed` cannot claim a document the import never saw.
+    failed: list[str] = []
+    used = 0
 
     def add_pdf(path: str) -> None:
         nonlocal page_offset
@@ -317,13 +351,19 @@ def extract_verbatim_text(
         page_offset += n_pages
         parts.append(paged_text)
 
-    def add_path(path: str) -> None:
+    def add_path(path: str, label: str = "") -> None:
+        nonlocal used
+        before = len(parts)
         if path.rsplit(".", 1)[-1].lower() == "pdf":
             add_pdf(path)
         else:
             text = extract_text_from_file(path, lang=ocr_lang)
             if text.strip():
                 parts.append(text)
+        if len(parts) > before:
+            used += 1
+        else:
+            failed.append(label or os.path.basename(path))
 
     total = len(saved_paths) + len(reused_ids)
     step = 0
@@ -343,6 +383,7 @@ def extract_verbatim_text(
         record = UploadedFileRecord.query.get(record_id)
         if record is None:
             logger.warning("Import: reused record %s not found", record_id)
+            failed.append(record_id)
             continue
 
         emit("stage", {
@@ -355,9 +396,10 @@ def extract_verbatim_text(
         mode = record.input_mode or "files"
         if mode in ("files", "gdrive"):
             if record.stored_path and os.path.isfile(record.stored_path):
-                add_path(record.stored_path)
+                add_path(record.stored_path, label=record.original_name)
             else:
                 logger.warning("Import: file missing on disk for record %s", record_id)
+                failed.append(record.original_name)
             continue
 
         try:
@@ -376,7 +418,12 @@ def extract_verbatim_text(
 
         if text.strip():
             parts.append(text)
+            used += 1
+        else:
+            failed.append(record.original_name)
 
+    if stats is not None:
+        stats.update({"filesRequested": total, "filesUsed": used, "filesFailed": failed})
     return "\n\n".join(parts)
 
 
@@ -678,8 +725,19 @@ def run_generation(payload: dict, emit=_noop) -> dict:
         raise RuntimeError(str(exc)) from exc
 
     persisted_paths: set[str] = set()
+    # Filled by extract_combined_text with what it could actually read.
+    extract_stats: dict = {}
     try:
         emit("stage", {"stage": "extracting"})
+
+        def files_processed() -> int:
+            """How many sources actually contributed text, not how many were asked for."""
+            if input_type != "files":
+                return 1 if input_type in {"youtube", "text"} else 0
+            if "filesUsed" in extract_stats:
+                return extract_stats["filesUsed"]
+            # Vector fast path / verbatim import read every requested record.
+            return len(saved_paths) + len(reused_file_ids)
 
         # Fast path — every reused file is already processed, so use the chunks
         # already in the vector store instead of re-extracting from disk.
@@ -703,11 +761,13 @@ def run_generation(payload: dict, emit=_noop) -> dict:
                     emit("stage", {"stage": "analyzing", "detail": "vectorFastPath", "total": len(chunks)})
 
         if action == "import" and input_type == "files":
-            combined_text = extract_verbatim_text(payload, saved_paths, config, emit=emit)
+            combined_text = extract_verbatim_text(
+                payload, saved_paths, config, emit=emit, stats=extract_stats,
+            )
         elif not use_vector_chunks:
             combined_text = extract_combined_text(
                 input_type, payload, saved_paths, config,
-                reused_file_ids=reused_file_ids, emit=emit,
+                reused_file_ids=reused_file_ids, emit=emit, stats=extract_stats,
             )
 
         if not combined_text.strip():
@@ -766,7 +826,7 @@ def run_generation(payload: dict, emit=_noop) -> dict:
             target = config["numberOfQuestions"] if top_up else 0
             emit("meta", {
                 "totalTextLength": len(cleaned),
-                "filesProcessed": len(saved_paths) + len(reused_file_ids),
+                "filesProcessed": files_processed(),
                 "inputType": input_type,
                 "numberOfQuestions": target,
                 "config": config,
@@ -800,7 +860,7 @@ def run_generation(payload: dict, emit=_noop) -> dict:
                 raise GenerationContentError(quality_error)
 
             from app.features.quizz.text_processing import (
-                filter_boilerplate, clean_text, chunk_text, select_important_chunks,
+                filter_boilerplate, clean_text, select_source_text,
             )
 
             if input_type == "youtube":
@@ -815,14 +875,12 @@ def run_generation(payload: dict, emit=_noop) -> dict:
             else:
                 emit("stage", {"stage": "analyzing"})
                 cleaned = clean_text(filter_boilerplate(combined_text))
-                selected = select_important_chunks(chunk_text(cleaned, max_chunk_size=8000), n=6)
-                quiz_text = "\n\n".join(selected)
-                if len(quiz_text) > 40_000:
-                    quiz_text = quiz_text[:40_000]
+                quiz_text = select_source_text(cleaned, config["numberOfQuestions"])
 
             emit("meta", {
                 "totalTextLength": len(cleaned),
-                "filesProcessed": len(saved_paths) + len(reused_file_ids),
+                "sourceTextLength": len(quiz_text),
+                "filesProcessed": files_processed(),
                 "inputType": input_type,
                 "numberOfQuestions": config["numberOfQuestions"],
                 "config": config,
@@ -855,13 +913,13 @@ def run_generation(payload: dict, emit=_noop) -> dict:
         quiz_set_id, page_distribution, persisted_paths = _persist(payload, questions, streaming)
 
         text_preview = cleaned[:500] + "..." if len(cleaned) > 500 else cleaned
-        total_files = len(saved_paths) + len(reused_file_ids)
         return {
             "quizSetId": quiz_set_id,
             "questions": questions,
             "extractedText": text_preview,
             "totalTextLength": len(cleaned),
-            "filesProcessed": total_files if input_type == "files" else (1 if input_type in {"youtube", "text"} else 0),
+            "filesProcessed": files_processed(),
+            "filesSkipped": extract_stats.get("filesFailed", []),
             "config": config,
             "inputType": input_type,
             "tokenUsage": token_usage,
