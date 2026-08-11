@@ -23,6 +23,9 @@ import logging
 import threading
 from datetime import datetime, timezone
 
+from flask import current_app
+
+from file_types import SMART_IMPORT_EXTENSIONS
 from app.db import db
 from app.features.folder.models import Folder
 from app.features.llm import (
@@ -35,8 +38,10 @@ from app.features.upload.models import UploadedFileRecord
 
 logger = logging.getLogger(__name__)
 
-# Supported file extensions for import
-SUPPORTED_EXTENSIONS = {"pdf", "docx", "doc", "txt", "pptx"}
+# Supported file extensions for import — see file_types.py. Images are excluded
+# on purpose; walking a directory that happens to contain photos would spend
+# vision OCR quota before anything could be classified.
+SUPPORTED_EXTENSIONS = SMART_IMPORT_EXTENSIONS
 
 # Files to always skip (system / hidden files)
 SKIP_FILES = {
@@ -115,43 +120,70 @@ def resume_job(job_id: str) -> bool:
     return False
 
 
-def _add_file_status(job_id: str, filename: str, status: str, folder_name: str = "", reason: str = ""):
+def _bump_counters_locked(job: dict, previous: str | None, status: str):
+    """Move a file between the job's counters. Caller must hold `_jobs_lock`.
+
+    Counting the transition rather than the destination keeps the totals right when
+    a file is re-labelled (categorizing → done → error): the old bucket gives the
+    file back before the new one takes it.
+    """
+    def bucket(s: str | None) -> str | None:
+        if s == "done":
+            return "completed"
+        if s in ("skipped", "error"):
+            return "skipped"
+        if s == "review":
+            return "reviewCount"
+        return None
+
+    old, new = bucket(previous), bucket(status)
+    if old == new:
+        return
+    if old:
+        job[old] = max(0, job.get(old, 0) - 1)
+    if new:
+        job[new] = job.get(new, 0) + 1
+
+
+def _add_file_status(job_id: str, key: str, filename: str, status: str, folder_name: str = "", reason: str = ""):
     with _jobs_lock:
-        if job_id not in _import_jobs:
+        job = _import_jobs.get(job_id)
+        if job is None:
             return
-        _import_jobs[job_id]["files"].append({
+        job["files"].append({
+            "key": key,              # absolute source path — unique, unlike the basename
             "name": filename,
             "status": status,        # scanning | categorizing | done | skipped | error | review
             "folderName": folder_name,
             "reason": reason,
+            "recordId": "",
         })
-        # Update counters
-        if status == "done":
-            _import_jobs[job_id]["completed"] += 1
-        elif status in ("skipped", "error"):
-            _import_jobs[job_id]["skipped"] += 1
-        elif status == "review":
-            _import_jobs[job_id]["reviewCount"] = _import_jobs[job_id].get("reviewCount", 0) + 1
+        _bump_counters_locked(job, None, status)
 
 
-def _update_file_status(job_id: str, filename: str, status: str, folder_name: str = "", reason: str = ""):
+def _update_file_status(job_id: str, key: str, status: str, folder_name: str = "",
+                        reason: str = "", record_id: str = ""):
+    """Update one file's entry, matched on its absolute path.
+
+    Matching used to be on the bare filename, so `Toan/Chuong 1.pdf` and
+    `Ly/Chuong 1.pdf` shared an entry: one was updated twice (double-counting the
+    progress totals) and the other never left "scanning".
+    """
     with _jobs_lock:
-        if job_id not in _import_jobs:
+        job = _import_jobs.get(job_id)
+        if job is None:
             return
-        for f in _import_jobs[job_id]["files"]:
-            if f["name"] == filename:
+        for f in job["files"]:
+            if f["key"] == key:
+                _bump_counters_locked(job, f.get("status"), status)
                 f["status"] = status
                 if folder_name:
                     f["folderName"] = folder_name
                 if reason:
                     f["reason"] = reason
-                break
-        if status == "done":
-            _import_jobs[job_id]["completed"] += 1
-        elif status in ("skipped", "error"):
-            _import_jobs[job_id]["skipped"] += 1
-        elif status == "review":
-            _import_jobs[job_id]["reviewCount"] = _import_jobs[job_id].get("reviewCount", 0) + 1
+                if record_id:
+                    f["recordId"] = record_id
+                return
 
 
 # ── Path Validation ──────────────────────────────────────────────────────────
@@ -393,11 +425,15 @@ def _categorize_batch(
     existing_folders: list[str],
     cred: LlmCredential,
     job_id: str = "",
-) -> dict[str, str]:
+) -> tuple[dict[str, str], bool]:
     """
-    Send a batch of files to the configured LLM and return a mapping:
+    Send a batch of files to the configured LLM and return (mapping, classified):
     filename -> folder name. Uses 'TRASH' for non-educational files. Includes
     few-shot examples and structured output instructions for better accuracy.
+
+    `classified` is False when the mapping is the subdirectory-name fallback rather
+    than an AI decision, so the caller can report that instead of passing a plain
+    directory copy off as classification.
     """
     # Build the file list for the prompt
     file_list_text = ""
@@ -433,27 +469,44 @@ def _categorize_batch(
         '- File "Slide_OOP_Java.pptx", content about classes and inheritance → folder: "Computer Science"\n'
         '- File "TieuLuan_LichSu.docx", content about Vietnamese history essay → folder: "Vietnamese History"\n'
         '- File "Novel_ConanChap1.pdf", content about detective fiction story → folder: "TRASH"\n\n'
-        "RESPOND with ONLY a valid JSON array (no markdown fences, no explanation):\n"
-        '[{"file": "exact_filename.pdf", "folder": "Folder Name"}, ...]\n\n'
+        "RESPOND with ONLY a valid JSON array (no markdown fences, no explanation).\n"
+        "Echo back the number shown next to each file as \"index\":\n"
+        '[{"index": 1, "file": "exact_filename.pdf", "folder": "Folder Name"}, ...]\n\n'
         f"FILES:{file_list_text}"
     )
 
 
     def _parse(raw: str) -> dict[str, str] | None:
+        """Parse the model reply into {absolute path -> folder name}.
+
+        Keyed on the path, not the filename: a scanned tree routinely holds
+        `Toan/Chuong 1.pdf` next to `Ly/Chuong 1.pdf`, and a name-keyed mapping
+        files both under whichever folder the model answered last.
+        """
         cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip()
         cleaned = re.sub(r"```\s*$", "", cleaned).strip()
         parsed = json.loads(cleaned)
         if not isinstance(parsed, list):
             return None
-        mapping = {}
+        mapping: dict[str, str] = {}
         for item in parsed:
-            fname = item.get("file", "")
-            folder = item.get("folder", "TRASH")
+            if not isinstance(item, dict):
+                continue
+            folder = item.get("folder") or "TRASH"
             # Normalize folder names (except TRASH)
             if folder.upper() != "TRASH":
                 folder = _normalize_folder_name(folder)
-            mapping[fname] = folder
-        return mapping
+
+            index = item.get("index")
+            if isinstance(index, int) and 1 <= index <= len(file_infos):
+                mapping[file_infos[index - 1]["path"]] = folder
+                continue
+            # No usable index — fall back to the name, but only when it is
+            # unambiguous within this batch.
+            matches = [fi for fi in file_infos if fi["name"] == item.get("file", "")]
+            if len(matches) == 1:
+                mapping[matches[0]["path"]] = folder
+        return mapping or None
 
     last_err = None
     try:
@@ -462,7 +515,8 @@ def _categorize_batch(
         )
         mapping = _parse(result.text)
         if mapping is not None:
-            return mapping
+            return mapping, True
+        last_err = ValueError("model returned JSON that is not a list of {file, folder}")
     except AllModelsExhaustedError as e:
         last_err = e
         if job_id:
@@ -471,7 +525,7 @@ def _categorize_batch(
         # Wait with cancel check
         for _ in range(MAX_RETRY_WAIT):
             if _is_job_cancelled(job_id):
-                return {}
+                return {}, True
             time.sleep(1)
         if job_id:
             _update_job(job_id, rateLimitInfo="")
@@ -481,7 +535,8 @@ def _categorize_batch(
             )
             mapping = _parse(result.text)
             if mapping is not None:
-                return mapping
+                return mapping, True
+            last_err = ValueError("model returned JSON that is not a list of {file, folder}")
         except Exception as retry_err:
             logger.error("Retry also failed: %s", retry_err)
             last_err = retry_err
@@ -490,8 +545,13 @@ def _categorize_batch(
         last_err = e
 
     logger.error("Categorization failed. Last error: %s", last_err)
-    # Fallback: use subdirectory structure
-    return {fi["name"]: _normalize_folder_name(fi.get("rel_dir", "") or "Uncategorized") for fi in file_infos}
+    # Fallback: file under the source subdirectory. Reported as a failure so the
+    # caller can tell the user the tree was copied, not classified.
+    fallback = {
+        fi["path"]: _normalize_folder_name(fi.get("rel_dir", "") or "Uncategorized")
+        for fi in file_infos
+    }
+    return fallback, False
 
 
 # ── Step 4: Main import pipeline (runs in background thread) ────────────────
@@ -517,6 +577,7 @@ def start_import_job(dir_path: str, app) -> str:
             "files": [],
             "createdFolders": [],
             "error": None,
+            "warning": "",
             "startedAt": datetime.now(timezone.utc).isoformat(),
             "paused": False,
             "cancelRequested": False,
@@ -558,7 +619,7 @@ def _run_import_pipeline(job_id: str, dir_path: str, app):
 
             # Register all files as "pending"
             for fi in all_files:
-                _add_file_status(job_id, fi["name"], "scanning")
+                _add_file_status(job_id, fi["path"], fi["name"], "scanning")
 
             # Check cancel
             if _is_job_cancelled(job_id):
@@ -580,7 +641,7 @@ def _run_import_pipeline(job_id: str, dir_path: str, app):
                 # Dedup check
                 file_hash = _compute_file_hash(fi["path"])
                 if file_hash and file_hash in existing_hashes:
-                    _update_file_status(job_id, fi["name"], "skipped", reason="Already imported (duplicate)")
+                    _update_file_status(job_id, fi["path"], "skipped", reason="Already imported (duplicate)")
                     continue
 
                 fi["hash"] = file_hash
@@ -588,7 +649,7 @@ def _run_import_pipeline(job_id: str, dir_path: str, app):
                 fi["snippet"] = snippet
 
                 if not snippet.strip():
-                    _update_file_status(job_id, fi["name"], "skipped", reason="Could not extract text (may be scanned PDF or password-protected)")
+                    _update_file_status(job_id, fi["path"], "skipped", reason="Could not extract text (may be scanned PDF or password-protected)")
                     continue
 
                 files_to_categorize.append(fi)
@@ -613,6 +674,13 @@ def _run_import_pipeline(job_id: str, dir_path: str, app):
             full_mapping: dict[str, str] = {}
             batches = [files_to_categorize[i:i + BATCH_SIZE] for i in range(0, len(files_to_categorize), BATCH_SIZE)]
 
+            # A batch that fails classification still gets imported, filed under its
+            # source subdirectory — but the user is told, instead of being left to
+            # believe the AI sorted a tree it only copied.
+            categorized_ok = 0
+            failed_batches = 0
+            fallback_keys: set[str] = set()
+
             for batch_idx, batch in enumerate(batches):
                 if _wait_while_paused(job_id):
                     _update_job(job_id, status="cancelled")
@@ -622,9 +690,15 @@ def _run_import_pipeline(job_id: str, dir_path: str, app):
 
                 # Update status for files in this batch
                 for fi in batch:
-                    _update_file_status(job_id, fi["name"], "categorizing")
+                    _update_file_status(job_id, fi["path"], "categorizing")
 
-                batch_mapping = _categorize_batch(batch, existing_folders, cred, job_id)
+                batch_mapping, batch_ok = _categorize_batch(batch, existing_folders, cred, job_id)
+                if batch_ok:
+                    categorized_ok += len(batch)
+                else:
+                    failed_batches += 1
+                    for fi in batch:
+                        fallback_keys.add(fi["path"])
 
                 if _is_job_cancelled(job_id):
                     _update_job(job_id, status="cancelled")
@@ -661,7 +735,9 @@ def _run_import_pipeline(job_id: str, dir_path: str, app):
                     return
 
                 fname = fi["name"]
-                suggested_folder = full_mapping.get(fname, "Uncategorized")
+                fkey = fi["path"]
+                suggested_folder = full_mapping.get(fkey, "Uncategorized")
+                was_guessed = fkey in fallback_keys
 
                 # TRASH → "Review Later" folder (safe, not deleted)
                 is_trash = suggested_folder.upper() == "TRASH"
@@ -708,23 +784,48 @@ def _run_import_pipeline(job_id: str, dir_path: str, app):
                     db.session.add(record)
 
                     if is_trash:
-                        _update_file_status(job_id, fname, "review",
+                        _update_file_status(job_id, fkey, "review",
                                             folder_name=REVIEW_FOLDER_NAME,
-                                            reason="AI suggests this may not be educational material")
+                                            reason="AI suggests this may not be educational material",
+                                            record_id=record.id)
                     else:
-                        _update_file_status(job_id, fname, "done", folder_name=suggested_folder.strip())
+                        _update_file_status(job_id, fkey, "done",
+                                            folder_name=suggested_folder.strip(),
+                                            reason=("AI classification unavailable — filed by source folder name"
+                                                    if was_guessed else ""),
+                                            record_id=record.id)
 
                 except Exception as e:
                     logger.warning("Failed to import file %s: %s", fname, e)
-                    _update_file_status(job_id, fname, "error", reason=str(e)[:200])
+                    _update_file_status(job_id, fkey, "error", reason=str(e)[:200])
 
             db.session.commit()
 
             # Trigger document processing for imported records (skip "Review Later" files)
             _trigger_background_processing(app, job_id)
 
-            _update_job(job_id, status="completed", createdFolders=created_folders)
-            logger.info("Smart import job %s completed: %d files processed", job_id, len(files_to_categorize))
+            if failed_batches and categorized_ok == 0:
+                # Nothing was actually classified — the import is a directory copy.
+                # Saying "completed" here is what made the failure invisible.
+                _update_job(
+                    job_id, status="error", createdFolders=created_folders,
+                    error="AI classification failed for every batch. Files were imported "
+                          "into folders named after their source subdirectories, not sorted "
+                          "by content. Check your API key and retry.",
+                )
+                logger.error("Smart import job %s: all %d batches fell back to directory names",
+                             job_id, failed_batches)
+            else:
+                _update_job(
+                    job_id, status="completed", createdFolders=created_folders,
+                    warning=(
+                        f"{len(fallback_keys)} file(s) could not be classified by AI and were "
+                        "filed by their source subdirectory name."
+                        if failed_batches else ""
+                    ),
+                )
+                logger.info("Smart import job %s completed: %d files processed (%d unclassified)",
+                            job_id, len(files_to_categorize), len(fallback_keys))
 
         except Exception as e:
             logger.error("Smart import job %s failed: %s", job_id, e, exc_info=True)
@@ -747,20 +848,21 @@ def _trigger_background_processing(app, job_id: str):
     if not done_files:
         return
 
+    # Look the record up by the id captured at insert time. Resolving it by
+    # `original_name` instead processed the newest same-named record twice and
+    # left the other stuck at `pending` forever.
+    record_ids = [(f["name"], f["recordId"]) for f in done_files if f.get("recordId")]
+    if not record_ids:
+        return
+
     def _process_all():
         with app.app_context():
-            for fi in done_files:
+            from app.features.upload.document_processor import process_record
+            for name, record_id in record_ids:
                 try:
-                    record = UploadedFileRecord.query.filter_by(
-                        original_name=fi["name"]
-                    ).order_by(
-                        UploadedFileRecord.created_at.desc()
-                    ).first()
-                    if record:
-                        from app.features.upload.document_processor import process_record
-                        process_record(record.id)
+                    process_record(record_id)
                 except Exception as e:
-                    logger.error("Background processing failed for file %s: %s", fi["name"], e)
+                    logger.error("Background processing failed for file %s: %s", name, e)
 
     t = threading.Thread(target=_process_all, daemon=True)
     t.start()

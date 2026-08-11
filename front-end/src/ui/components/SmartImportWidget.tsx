@@ -334,6 +334,14 @@ export function SmartImportWidget({
               {job.error}
             </div>
           )}
+
+          {/* Partial-failure notice: import succeeded but some files were filed
+              by directory name rather than classified by the AI. */}
+          {!job.error && job.warning && (
+            <div className="mt-2 text-xs text-amber-400 bg-amber-500/10 rounded-lg px-3 py-2">
+              {job.warning}
+            </div>
+          )}
         </div>
 
         {/* File list */}
@@ -349,7 +357,7 @@ export function SmartImportWidget({
 
               return (
                 <motion.div
-                  key={`${file.name}-${idx}`}
+                  key={file.key || `${file.name}-${idx}`}
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: Math.min(idx * 0.02, 0.5) }}
