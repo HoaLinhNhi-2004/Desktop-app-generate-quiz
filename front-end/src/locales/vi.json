@@ -366,7 +366,8 @@
     "ready": "Sẵn sàng",
     "loadFailed": "Không tải được danh sách tài liệu.",
     "unsupportedFile": "Định dạng file không được hỗ trợ",
-    "unsupportedFileDesc": "Đã bỏ qua: {{names}}"
+    "unsupportedFileDesc": "Đã bỏ qua: {{names}}",
+    "fileTooLarge": "File vượt quá giới hạn {{limit}} MB"
   },
   "materialSelect": {
     "title": "Chọn 1 tài liệu",

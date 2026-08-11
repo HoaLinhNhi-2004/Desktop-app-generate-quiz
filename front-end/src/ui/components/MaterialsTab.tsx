@@ -3,6 +3,12 @@ import { useTranslation } from "react-i18next";
 import i18n from "@/config/i18n";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import {
+  FILE_ACCEPT_ATTRIBUTE,
+  MAX_UPLOAD_BYTES,
+  MAX_UPLOAD_MB,
+  isSupportedFile,
+} from "@/lib/file-types";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -65,19 +71,9 @@ import {
 
 const TEXT_MAX_CHARS = 100_000;
 
-const ACCEPTED_TYPES = [
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/msword",
-  "image/png",
-  "image/jpeg",
-  "image/jpg",
-  "image/webp",
-  "image/bmp",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
-  "application/vnd.ms-excel", // .xls
-  "text/csv", // .csv
-];
+// Validation is on the extension, not `File.type`: browsers report an empty MIME
+// type for .pptx and .csv often enough that a supported file looked unsupported,
+// and the extension is what the backend checks anyway.
 
 const YT_URL_RE =
   /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
@@ -278,8 +274,7 @@ function UploadForm({ folderId }: { folderId: string }) {
 
   const processFiles = useCallback((fileList: FileList | File[]) => {
     const all = Array.from(fileList);
-    const valid = all.filter((f) => ACCEPTED_TYPES.includes(f.type));
-    const rejected = all.filter((f) => !ACCEPTED_TYPES.includes(f.type));
+    const rejected = all.filter((f) => !isSupportedFile(f.name));
     if (rejected.length > 0) {
       toast.error(i18n.t("materials.unsupportedFile"), {
         description: i18n.t("materials.unsupportedFileDesc", {
@@ -287,6 +282,16 @@ function UploadForm({ folderId }: { folderId: string }) {
         }),
       });
     }
+    // Size is checked here because Flask answers an over-sized upload with a
+    // raw Werkzeug 413 that names no limit and has no translation.
+    const supported = all.filter((f) => isSupportedFile(f.name));
+    const tooBig = supported.filter((f) => f.size > MAX_UPLOAD_BYTES);
+    if (tooBig.length > 0) {
+      toast.error(i18n.t("materials.fileTooLarge", { limit: MAX_UPLOAD_MB }), {
+        description: tooBig.map((f) => f.name).join(", "),
+      });
+    }
+    const valid = supported.filter((f) => f.size <= MAX_UPLOAD_BYTES);
     if (valid.length > 0) setPendingFiles((prev) => [...prev, ...valid]);
   }, []);
 
@@ -558,7 +563,7 @@ function UploadForm({ folderId }: { folderId: string }) {
                 <input
                   type="file"
                   multiple
-                  accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.bmp,.xlsx,.xls,.csv"
+                  accept={FILE_ACCEPT_ATTRIBUTE}
                   onChange={(e) => {
                     if (e.target.files) processFiles(e.target.files);
                     e.target.value = "";

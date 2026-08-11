@@ -366,7 +366,8 @@
     "ready": "Ready",
     "loadFailed": "Failed to load materials.",
     "unsupportedFile": "Unsupported file type",
-    "unsupportedFileDesc": "Skipped: {{names}}"
+    "unsupportedFileDesc": "Skipped: {{names}}",
+    "fileTooLarge": "File exceeds the {{limit}} MB limit"
   },
   "materialSelect": {
     "title": "Select 1 material",

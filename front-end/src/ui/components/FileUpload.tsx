@@ -1,6 +1,13 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import {
+  FILE_ACCEPT_ATTRIBUTE,
+  MAX_UPLOAD_BYTES,
+  MAX_UPLOAD_MB,
+  isSupportedFile,
+} from "@/lib/file-types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Upload, FileText, Image as ImageIcon, X, FileUp, FileSpreadsheet } from "lucide-react";
@@ -22,20 +29,6 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-const ACCEPTED_TYPES = [
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/msword",
-  "image/png",
-  "image/jpeg",
-  "image/jpg",
-  "image/webp",
-  "image/bmp",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
-  "application/vnd.ms-excel", // .xls
-  "text/csv", // .csv
-];
-
 export function FileUpload({
   files,
   onFilesChange,
@@ -47,9 +40,21 @@ export function FileUpload({
   const processFiles = useCallback(
     (fileList: FileList | File[]) => {
       const newFiles: UploadedFile[] = [];
+      const rejected: string[] = [];
+      const tooBig: string[] = [];
 
       Array.from(fileList).forEach((file) => {
-        if (!ACCEPTED_TYPES.includes(file.type)) return;
+        // Extension, not `File.type`: browsers leave the MIME type empty for
+        // .pptx and .csv often enough that supported files were dropped here —
+        // silently, since this branch just returned.
+        if (!isSupportedFile(file.name)) {
+          rejected.push(file.name);
+          return;
+        }
+        if (file.size > MAX_UPLOAD_BYTES) {
+          tooBig.push(file.name);
+          return;
+        }
 
         const uploadedFile: UploadedFile = {
           id: generateId(),
@@ -73,11 +78,23 @@ export function FileUpload({
         newFiles.push(uploadedFile);
       });
 
+      if (rejected.length > 0) {
+        toast.error(t("materials.unsupportedFile"), {
+          description: t("materials.unsupportedFileDesc", {
+            names: rejected.join(", "),
+          }),
+        });
+      }
+      if (tooBig.length > 0) {
+        toast.error(t("materials.fileTooLarge", { limit: MAX_UPLOAD_MB }), {
+          description: tooBig.join(", "),
+        });
+      }
       if (newFiles.length > 0) {
         onFilesChange([...files, ...newFiles]);
       }
     },
-    [files, onFilesChange],
+    [files, onFilesChange, t],
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -187,7 +204,7 @@ export function FileUpload({
           <input
             type="file"
             multiple
-            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.bmp,.xlsx,.xls,.csv"
+            accept={FILE_ACCEPT_ATTRIBUTE}
             onChange={handleFileInput}
             className="absolute inset-0 cursor-pointer opacity-0"
           />

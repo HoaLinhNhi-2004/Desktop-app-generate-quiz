@@ -1,6 +1,12 @@
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
+import {
+  FILE_ACCEPT_ATTRIBUTE,
+  MAX_UPLOAD_BYTES,
+  MAX_UPLOAD_MB,
+  isSupportedFile,
+} from "@/lib/file-types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -35,20 +41,6 @@ import { toast } from "sonner";
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const TEXT_MAX_CHARS = 20_000;
-
-const ACCEPTED_TYPES = [
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/msword",
-  "image/png",
-  "image/jpeg",
-  "image/jpg",
-  "image/webp",
-  "image/bmp",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
-  "application/vnd.ms-excel", // .xls
-  "text/csv", // .csv
-];
 
 const CAPTION_LANG_OPTIONS = [
   { value: "vi", label: "Tiếng Việt" },
@@ -215,8 +207,18 @@ function FileUploadTab({
   const processFiles = useCallback(
     (fileList: FileList | File[]) => {
       const newFiles: UploadedFile[] = [];
+      const rejected: string[] = [];
+      const tooBig: string[] = [];
       Array.from(fileList).forEach((file) => {
-        if (!ACCEPTED_TYPES.includes(file.type)) return;
+        // Extension rather than `File.type` — see FileUpload.tsx.
+        if (!isSupportedFile(file.name)) {
+          rejected.push(file.name);
+          return;
+        }
+        if (file.size > MAX_UPLOAD_BYTES) {
+          tooBig.push(file.name);
+          return;
+        }
         const uploadedFile: UploadedFile = {
           id: generateId(),
           name: file.name,
@@ -235,9 +237,21 @@ function FileUploadTab({
         }
         newFiles.push(uploadedFile);
       });
+      if (rejected.length > 0) {
+        toast.error(t("materials.unsupportedFile"), {
+          description: t("materials.unsupportedFileDesc", {
+            names: rejected.join(", "),
+          }),
+        });
+      }
+      if (tooBig.length > 0) {
+        toast.error(t("materials.fileTooLarge", { limit: MAX_UPLOAD_MB }), {
+          description: tooBig.join(", "),
+        });
+      }
       if (newFiles.length > 0) onFilesChange([...files, ...newFiles]);
     },
-    [files, onFilesChange],
+    [files, onFilesChange, t],
   );
 
   const removeFile = useCallback(
@@ -302,7 +316,7 @@ function FileUploadTab({
           <input
             type="file"
             multiple
-            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.bmp,.xlsx,.xls,.csv"
+            accept={FILE_ACCEPT_ATTRIBUTE}
             onChange={(e) => {
               if (e.target.files) processFiles(e.target.files);
               e.target.value = "";

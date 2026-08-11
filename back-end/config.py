@@ -2,6 +2,8 @@ import os
 import secrets
 from dotenv import load_dotenv
 
+from file_types import SUPPORTED_EXTENSIONS
+
 load_dotenv()
 
 
@@ -43,8 +45,9 @@ class Config:
     # ChromaDB vector store
     CHROMADB_PATH = os.path.join(_data_dir, "instance", "chromadb")
 
-    # Allowed file extensions
-    ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "bmp", "webp", "tiff", "docx", "doc"}
+    # Allowed file extensions — see file_types.py for why this is shared rather
+    # than restated per route.
+    ALLOWED_EXTENSIONS = SUPPORTED_EXTENSIONS
 
     # LLM providers, keys and per-provider model chains are managed via the UI
     # (Settings > API Keys) and stored in the DB — see app/features/llm.

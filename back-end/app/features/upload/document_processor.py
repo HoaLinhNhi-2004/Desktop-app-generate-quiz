@@ -174,6 +174,12 @@ def _extract_file(record: UploadedFileRecord, emit=_noop) -> str:
     elif ext in ("docx", "doc"):
         from app.features.quizz.docx_service import extract_text_from_docx
         return extract_text_from_docx(record.stored_path)
+    elif ext == "pptx":
+        from app.features.quizz.pptx_service import extract_text_from_pptx
+        return extract_text_from_pptx(record.stored_path)
+    elif ext == "txt":
+        from app.features.quizz.text_file_service import extract_text_from_txt
+        return extract_text_from_txt(record.stored_path)
     elif ext in ("png", "jpg", "jpeg", "webp", "bmp", "tiff"):
         from app.features.quizz.ocr_service import extract_text_from_image
         return extract_text_from_image(record.stored_path)
@@ -226,21 +232,51 @@ def _extract_pdf(file_path: str, emit=_noop) -> str:
 
 
 def _ocr_pdf(file_path: str, emit=_noop) -> str:
-    """Convert PDF pages to images and run vision OCR on each."""
+    """Convert PDF pages to images and run vision OCR on each.
+
+    Pages are rendered one at a time and the PNG is deleted straight after, so a
+    long scan never has more than a single page of pixels on disk. A failure part
+    way through keeps the pages already read instead of discarding the whole run.
+    """
     import tempfile
+    import fitz
     from app.features.quizz.ocr_service import extract_text_from_image
-    from app.features.quizz.pdf_service import render_pdf_pages
+    from app.features.quizz.pdf_service import MAX_OCR_PAGES, ocr_dpi_for, render_pdf_page
 
     all_texts: list[str] = []
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        image_paths = render_pdf_pages(file_path, tmpdir)
-        total = len(image_paths)
+    with fitz.open(file_path) as doc:
+        page_count = doc.page_count
+        total = min(page_count, MAX_OCR_PAGES)
+        dpi = ocr_dpi_for(page_count)
+        if total < page_count:
+            logger.warning(
+                "%s has %d pages; OCR limited to the first %d",
+                os.path.basename(file_path), page_count, total,
+            )
         emit("stage", {"stage": "ocr", "current": 0, "total": total})
-        for i, img_path in enumerate(image_paths):
-            text = extract_text_from_image(img_path)
-            if text.strip():
-                all_texts.append(text.strip())
-            emit("stage", {"stage": "ocr", "current": i + 1, "total": total})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for i in range(total):
+                img_path = ""
+                try:
+                    img_path = render_pdf_page(doc, i, tmpdir, dpi)
+                    text = extract_text_from_image(img_path)
+                except Exception as e:
+                    logger.error(
+                        "OCR stopped at page %d/%d of %s (%s) — keeping %d page(s)",
+                        i + 1, total, os.path.basename(file_path), e, len(all_texts),
+                    )
+                    break
+                finally:
+                    if img_path and os.path.isfile(img_path):
+                        try:
+                            os.remove(img_path)
+                        except OSError:
+                            pass
+
+                if text.strip():
+                    all_texts.append(text.strip())
+                emit("stage", {"stage": "ocr", "current": i + 1, "total": total})
 
     return "\n\n".join(all_texts)
