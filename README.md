@@ -46,7 +46,7 @@
 
 The easiest way to use the application. You do **not** need to install Python, Node.js, or any other tools.
 
-1. Go to the [**Latest Release**](https://github.com/HoangLong08/Desktop-app-generate-quiz/releases/latest) page.
+1. Go to the [**Latest Release**](https://github.com/HoaLinhNhi-2004/Desktop-app-generate-quiz/releases/latest) page.
 2. Under **Assets**, download the `.zip` file for your operating system:
 
 | Your OS | Download file | How to run |
@@ -72,7 +72,7 @@ The easiest way to use the application. You do **not** need to install Python, N
 
 ```bash
 # 1. Clone repo
-git clone https://github.com/HoangLong08/Desktop-app-generate-quiz.git
+git clone https://github.com/HoaLinhNhi-2004/Desktop-app-generate-quiz.git
 cd Desktop-app-generate-quiz
 
 # 2. Run backend

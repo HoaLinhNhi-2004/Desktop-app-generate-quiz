@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "description": "AI-powered desktop quiz generator — create quizzes from PDF, DOCX, images, YouTube videos, or plain text using Google Gemini. Supports multiple question types (multiple-choice, true/false, fill-in-the-blank), quiz export to DOCX & Kahoot, performance analytics with charts, dark/light theme, and Vietnamese/English localization.",
-  "author": "HoangLong",
+  "author": "HoaLinhNhi-2004",
   "keywords": [
     "quiz-generator",
     "ai-quiz",
@@ -29,7 +29,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/HoangLong08/Desktop-app-generate-quiz.git"
+    "url": "https://github.com/HoaLinhNhi-2004/Desktop-app-generate-quiz.git"
   },
   "main": "dist-electron/main.js",
   "scripts": {

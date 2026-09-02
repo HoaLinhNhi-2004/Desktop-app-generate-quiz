@@ -18,7 +18,7 @@
   "removePackageKeywords": true,
   "publish": {
     "provider": "github",
-    "owner": "HoangLong08",
+    "owner": "HoaLinhNhi-2004",
     "repo": "Desktop-app-generate-quiz"
   },
   "mac": { "target": "zip", "icon": "src/assets/trayIcon.png" },
