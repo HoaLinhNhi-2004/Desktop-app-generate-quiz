@@ -6,7 +6,7 @@
 
 .NOTES
   Prerequisites:
-    - Python 3.11+ installed and on PATH
+    - Python 3.12+ installed and on PATH (numpy, pinned in requirements.txt, needs 3.12)
     - pip install -r requirements.txt
     - pip install pyinstaller
 #>

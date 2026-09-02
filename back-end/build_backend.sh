@@ -5,7 +5,7 @@
 # as an extraResource.
 #
 # Prerequisites:
-#   - Python 3.11+ installed
+#   - Python 3.12+ installed (numpy, pinned in requirements.txt, needs 3.12)
 #   - pip install -r requirements.txt
 #   - pip install pyinstaller
 
