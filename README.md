@@ -16,8 +16,7 @@
   <a href="#-features">Features</a> •
   <a href="#-demo">Demo</a> •
   <a href="#-installation">Installation</a> •
-  <a href="#%EF%B8%8F-tech-stack">Tech Stack</a> •
-  <a href="#-contributing">Contributing</a>
+  <a href="#%EF%B8%8F-tech-stack">Tech Stack</a>
 </p>
 
 ---
@@ -149,16 +148,6 @@ Desktop-app-generate-quiz/
 ```bash
 python app.py              # Run server (port 5000)
 ```
-
-## 🤝 Contributing
-
-All contributions are welcome! Please:
-
-1. Fork the repo
-2. Create a new branch (`git checkout -b feature/feature-name`)
-3. Commit your changes (`git commit -m "Add: description"`)
-4. Push to the branch (`git push origin feature/feature-name`)
-5. Create a Pull Request
 
 <!-- ## 🔐 Code signing policy
 
