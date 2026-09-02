@@ -86,8 +86,6 @@ import {
   NotebookText,
   ExternalLink,
   Loader2,
-  Download,
-  PackageCheck,
   Settings2,
   Copy,
   Sparkles,
@@ -111,12 +109,6 @@ import type {
   IntegrationProvider,
   IntegrationStatus,
 } from "@/features/integrations";
-import {
-  isUpdateCheckSupported,
-  useManualUpdateCheck,
-  useOpenReleasePage,
-  useUpdateCheck,
-} from "@/features/updates";
 
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
@@ -1979,139 +1971,6 @@ function IntegrationsCard() {
   );
 }
 
-function AppUpdateCard() {
-  const { t, i18n } = useTranslation();
-  const { data, isFetching } = useUpdateCheck();
-  const manualCheck = useManualUpdateCheck();
-  const openReleasePage = useOpenReleasePage();
-
-  const supported = isUpdateCheckSupported();
-  const updateAvailable = data?.status === "update-available";
-  const checking = isFetching || manualCheck.isPending;
-
-  const formatDate = (iso: string | null) =>
-    iso ? new Date(iso).toLocaleDateString(i18n.language) : null;
-
-  async function handleDownload() {
-    const opened = await openReleasePage(data?.releaseUrl ?? null);
-    if (!opened) toast.error(t("updates.openFailed"));
-  }
-
-  return (
-    <Card
-      className={cn(
-        "border-border/50 bg-card/50",
-        updateAvailable && "border-emerald-500/40 bg-emerald-500/5",
-      )}
-    >
-      <CardHeader className="pb-3">
-        <div className="flex items-center gap-2">
-          <PackageCheck
-            className={cn(
-              "size-5",
-              updateAvailable ? "text-emerald-400" : "text-primary",
-            )}
-            aria-hidden="true"
-          />
-          <CardTitle className="text-base font-semibold">
-            {t("updates.sectionTitle")}
-          </CardTitle>
-        </div>
-        <CardDescription>{t("updates.sectionDescription")}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">
-              {t("updates.currentVersion")}
-            </span>
-            <span className="font-mono font-semibold">
-              {data?.currentVersion ?? "—"}
-            </span>
-          </div>
-          {data?.latestVersion && (
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">
-                {t("updates.latestVersion")}
-              </span>
-              <span
-                className={cn(
-                  "font-mono font-semibold",
-                  updateAvailable && "text-emerald-400",
-                )}
-              >
-                {data.latestVersion}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {!supported ? (
-          <p className="text-sm text-muted-foreground">
-            {t("updates.unsupported")}
-          </p>
-        ) : data?.status === "error" ? (
-          <p className="flex items-start gap-1.5 text-sm text-amber-400">
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-            <span>{t(`updates.errors.${data.error?.code ?? "unexpected"}`)}</span>
-          </p>
-        ) : data?.status === "up-to-date" ? (
-          <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            <CheckCircle2 className="size-3.5 text-emerald-400" />
-            {t("updates.upToDate")}
-          </p>
-        ) : updateAvailable ? (
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-emerald-400">
-              {data.releaseName || t("updates.newRelease")}
-              {formatDate(data.publishedAt) && (
-                <span className="ml-2 text-xs font-normal text-muted-foreground">
-                  {t("updates.publishedAt", {
-                    date: formatDate(data.publishedAt),
-                  })}
-                </span>
-              )}
-            </p>
-            {data.releaseNotes && (
-              <div className="max-h-40 overflow-y-auto rounded-md border border-border/60 bg-background/40 p-3">
-                <p className="whitespace-pre-wrap text-xs text-muted-foreground">
-                  {data.releaseNotes}
-                </p>
-              </div>
-            )}
-          </div>
-        ) : null}
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5"
-            disabled={!supported || checking}
-            onClick={() => manualCheck.mutate()}
-          >
-            <RefreshCw className={cn("size-3.5", checking && "animate-spin")} />
-            {checking ? t("updates.checking") : t("updates.checkNow")}
-          </Button>
-          {updateAvailable && (
-            <Button size="sm" className="gap-1.5" onClick={handleDownload}>
-              <Download className="size-3.5" />
-              {t("updates.download")}
-            </Button>
-          )}
-          {data?.checkedAt && (
-            <span className="text-[10px] text-muted-foreground/70">
-              {t("updates.lastChecked", {
-                time: new Date(data.checkedAt).toLocaleTimeString(i18n.language),
-              })}
-            </span>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 function AccessibilityCard() {
   const { t } = useTranslation();
   const {
@@ -2385,11 +2244,6 @@ export function SettingsContent() {
 
         {/* Accessibility settings */}
         <AccessibilityCard />
-
-        <Separator />
-
-        {/* App version / GitHub release check */}
-        <AppUpdateCard />
 
         <Separator />
 

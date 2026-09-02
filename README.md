@@ -82,8 +82,8 @@ python app.py
 
 # 3. Run frontend (new terminal)
 cd front-end
-yarn install
-yarn dev
+npm ci
+npm run dev
 ```
 
 Open browser at `http://localhost:5123`
@@ -159,10 +159,6 @@ All contributions are welcome! Please:
 3. Commit your changes (`git commit -m "Add: description"`)
 4. Push to the branch (`git push origin feature/feature-name`)
 5. Create a Pull Request
-
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE) for more details.
 
 <!-- ## 🔐 Code signing policy
 

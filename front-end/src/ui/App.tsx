@@ -12,7 +12,6 @@ import { FolderDetailPage } from "./pages/FolderDetailPage";
 import { EditQuizPage } from "./pages/EditQuizPage";
 import { SmartImportWidget } from "./components/SmartImportWidget";
 import { QuizStreamWidget } from "./components/QuizStreamWidget";
-import { UpdateNotifier } from "./components/UpdateNotifier";
 
 function GlobalSmartImportWidget() {
   const ctx = useSmartImportContext();
@@ -66,7 +65,6 @@ function App() {
           <FloatingToolbar />
           <GlobalSmartImportWidget />
           <GlobalQuizStreamWidget />
-          <UpdateNotifier />
           <Toaster />
         </div>
       </QuizStreamProvider>

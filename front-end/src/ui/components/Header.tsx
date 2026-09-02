@@ -12,13 +12,10 @@ import {
   DrawerDescription,
 } from "@/components/ui/drawer";
 import { SettingsContent } from "@/ui/pages/SettingsPage";
-import { useUpdateCheck } from "@/features/updates";
 
 export function FloatingToolbar() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { t } = useTranslation();
-  const { data: update } = useUpdateCheck();
-  const updateAvailable = update?.status === "update-available";
 
   return (
     <>
@@ -26,21 +23,11 @@ export function FloatingToolbar() {
         <Button
           variant={settingsOpen ? "secondary" : "ghost"}
           size="icon"
-          className="relative size-8 rounded-full"
+          className="size-8 rounded-full"
           onClick={() => setSettingsOpen(true)}
-          aria-label={
-            updateAvailable
-              ? t("updates.badgeAriaLabel", { version: update?.latestVersion })
-              : t("header.settingsTitle")
-          }
+          aria-label={t("header.settingsTitle")}
         >
           <Settings className="size-4" />
-          {updateAvailable && (
-            <span
-              aria-hidden="true"
-              className="absolute right-0.5 top-0.5 size-2 rounded-full bg-emerald-500 ring-2 ring-card"
-            />
-          )}
         </Button>
         <ModeToggle />
         <LanguageSwitcher />
