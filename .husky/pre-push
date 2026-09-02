@@ -3,26 +3,48 @@
 # stopped. Takes ~2 min; `git push --no-verify` skips it when you mean to.
 set -e
 
+# Backend tests first: they take ~10s and catch the logic regressions, so a
+# broken pipeline fails here instead of after a two-minute Vite build.
+# Skipped (not failed) when no Python is around — a frontend-only checkout
+# should still be able to push, and CI runs them unconditionally either way.
+echo "[pre-push 1/5] Backend tests"
+repo_root=$(git rev-parse --show-toplevel)
+backend_python=""
+for candidate in "$repo_root/back-end/venv/Scripts/python.exe" "$repo_root/back-end/venv/bin/python"; do
+  if [ -x "$candidate" ]; then backend_python="$candidate"; break; fi
+done
+if [ -z "$backend_python" ]; then
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1; then backend_python="$candidate"; break; fi
+  done
+fi
+if [ -n "$backend_python" ]; then
+  (cd "$repo_root/back-end" && "$backend_python" -m unittest discover -s tests -t .)
+else
+  echo "  no Python found - skipping (CI runs them regardless)"
+fi
+
 cd front-end
 
 # Catches the exact failure CI hits first: package.json changed without its lock
-# file. Checked against a copy because npm rewrites a yarn.lock it finds beside
-# the package.json — even under --dry-run — which would dirty the tree on every
-# push.
-echo "[pre-push 1/4] package-lock.json in sync"
+# file. Run against a copy so the check can never write into the working tree —
+# this used to be load-bearing, because npm rewrote the yarn.lock sitting beside
+# package.json even under --dry-run. That file is gone (npm is the only package
+# manager here now), but keeping the check isolated costs nothing.
+echo "[pre-push 2/5] package-lock.json in sync"
 lockcheck=$(mktemp -d)
 trap 'rm -rf "$lockcheck"' EXIT
 cp package.json package-lock.json "$lockcheck/"
 (cd "$lockcheck" && npm ci --dry-run >/dev/null)
 
-echo "[pre-push 2/4] ESLint"
+echo "[pre-push 3/5] ESLint"
 npm run lint
 
 # `npm run build` is `tsc -b && vite build`, so it covers CI's type-check step.
-echo "[pre-push 3/4] TypeScript + Vite build"
+echo "[pre-push 4/5] TypeScript + Vite build"
 npm run build
 
-echo "[pre-push 4/4] Electron transpile"
+echo "[pre-push 5/5] Electron transpile"
 npm run transpile:electron
 
 echo "pre-push: all CI gates passed"

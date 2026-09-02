@@ -23,6 +23,10 @@ desktop.ini
 
 # ─── Node (front-end & welcome) ────────────────────────────────────────────
 node_modules/
+# npm is the only package manager here: CI runs `npm ci`, the pre-push hook
+# checks package-lock.json, and a stray yarn.lock only drifts out of sync.
+yarn.lock
+pnpm-lock.yaml
 dist/
 dist-react/
 dist-electron/
@@ -68,6 +72,5 @@ auto_dataset_builder_proposal.md
 docs/auto_dataset_builder_proposal.md
 docs/smart_folder_import_proposal.md
 
-tests/
 CLAUDE.md
 /.claude/
