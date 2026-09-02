@@ -150,6 +150,13 @@ Desktop-app-generate-quiz/
 python app.py              # Run server (port 5000)
 ```
 
+## 🙏 Credits
+
+This is a fork of [HoangLong08/Desktop-app-generate-quiz](https://github.com/HoangLong08/Desktop-app-generate-quiz), where the
+application was originally written. Upstream has not published a licence
+file, so the terms of reuse are whatever its author decides -- ask there
+before reusing this code.
+
 ## 🤝 Contributing
 
 All contributions are welcome! Please:
