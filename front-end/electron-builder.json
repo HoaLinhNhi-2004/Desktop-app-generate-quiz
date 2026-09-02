@@ -11,7 +11,7 @@
     "dist-electron/preload.cjs",
     "src/assets/**"
   ],
-  "compression": "maximum",
+  "compression": "normal",
   "asar": true,
   "electronLanguages": ["en-US", "vi"],
   "removePackageScripts": true,
